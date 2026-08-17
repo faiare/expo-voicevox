@@ -113,6 +113,18 @@ AudioQuery と AccentPhrase は **voicevox-core の JSON 文字列**でブリッ
 - **読み出す API は作らない**。`voicevox_user_dict_to_json` が返すのは MeCab 形式（`word_type` を持たず品詞から逆引きする）で、Android の `UserDict.toHashMap()` が返す 5 フィールドの `UserDictWord` と形が違い、両 OS で同じ値を返せない。
 - iOS で辞書を差し替えるときは **`use_user_dict` を成功させてから旧辞書を `voicevox_user_dict_delete`** する。破棄済みの辞書に触るとプロセスごと落ちる。
 
+#### C 構造体が保持する文字列の寿命（Swift）
+
+`VoicevoxUserDictWord` は `surface` / `pronunciation` を **`const char *` で保持する**（コピーしない）。
+ヘッダの safety に「`voicevox_user_dict_add_word` の時点で有効でなければならない」と書かれているので、
+Swift の `String` を `voicevox_user_dict_word_make` にそのまま渡してはいけない。Swift が用意する
+一時的な C 文字列はその呼び出しが終わると解放され、`add_word` が解放済みメモリを読んで
+`VOICEVOX_RESULT_INVALID_USER_DICT_WORD_ERROR`（24）になる。**`withCString` のスコープ内で
+`add_word` まで済ませること**（`ios/VoicevoxEngine.swift` の `addWord`）。
+
+`tts` / `synthesis` / `open_jtalk_rc_new` などは文字列を呼び出し中しか読まないので、`String` を
+直接渡してよい。構造体に残るのはこの 1 箇所だけ。
+
 ### C API を Swift から呼ぶときの型の曖昧さ
 
 `VoicevoxResultCode` / `VoicevoxAccelerationMode` / `VoicevoxUserDictWordType` は「enum タグ」と「int32_t の typedef」が両方ヘッダにあり、Swift では型名として曖昧になる。**値は `Int32` として扱い、`Int32(VOICEVOX_XXX.rawValue)` で取り出す**こと。

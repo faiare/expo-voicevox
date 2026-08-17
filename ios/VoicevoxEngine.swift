@@ -338,14 +338,27 @@ final class VoicevoxEngine {
     return created
   }
 
+  /// 単語を辞書へ追加する。
+  ///
+  /// `VoicevoxUserDictWord` は文字列を**コピーせずポインタで保持する**。ヘッダの safety に
+  /// 「`voicevox_user_dict_add_word` の時点で `surface` と `pronunciation` が読み込みについて
+  /// 有効でなければならない」と明記されているので、`String` をそのまま
+  /// `voicevox_user_dict_word_make` に渡してはいけない。Swift が作る一時的な C 文字列は
+  /// その呼び出しが終わった時点で解放され、`add_word` が解放済みメモリを読んで
+  /// `VOICEVOX_RESULT_INVALID_USER_DICT_WORD_ERROR`（24）になる。
+  /// `withCString` で `add_word` を終えるまでバッファを生かしておくこと。
   private func addWord(_ word: UserDictWord, to dict: OpaquePointer) throws {
-    var native = voicevox_user_dict_word_make(word.surface, word.pronunciation, word.accentType)
-    native.word_type = word.wordType
-    native.priority = word.priority
-    // UUID は辞書を作り直すたびに変わるので受け取らずに捨てる。
-    var uuid = (UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0),
-                UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0))
-    try check(voicevox_user_dict_add_word(dict, &native, &uuid))
+    try word.surface.withCString { surface in
+      try word.pronunciation.withCString { pronunciation in
+        var native = voicevox_user_dict_word_make(surface, pronunciation, word.accentType)
+        native.word_type = word.wordType
+        native.priority = word.priority
+        // UUID は辞書を作り直すたびに変わるので受け取らずに捨てる。
+        var uuid = (UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0),
+                    UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0))
+        try check(voicevox_user_dict_add_word(dict, &native, &uuid))
+      }
+    }
   }
 
   /// OpenJTalk がまだ無ければ何もしない。`initialize()` の中で改めて適用される。
