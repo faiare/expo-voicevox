@@ -7,13 +7,33 @@
   "scripts": {
     "build": "node internal/module_scripts/build.js",
     "clean": "node internal/module_scripts/clean.js",
-    "lint": "eslint src/",
+    "lint": "eslint src/ plugin/src/ scripts/",
     "test": "node internal/module_scripts/test.js",
     "prepare": "node internal/module_scripts/prepare.js",
     "open:ios": "node internal/module_scripts/open-ios.js",
     "open:android": "node internal/module_scripts/open-android.js",
-    "setup:voicevox": "node scripts/fetch-voicevox-core.mjs"
+    "setup:voicevox": "tsc --build plugin && node scripts/fetch-voicevox-core.mjs",
+    "gen:vvm-catalog": "tsc --build plugin && node scripts/gen-vvm-catalog.mjs",
+    "refresh:artifact-digests": "tsc --build plugin && node scripts/refresh-artifact-digests.mjs"
   },
+  "files": [
+    "app.plugin.js",
+    "build",
+    "plugin/build/**/*.js",
+    "plugin/build/**/*.d.ts",
+    "src/*.ts",
+    "expo-module.config.json",
+    "ios/*.podspec",
+    "ios/*.swift",
+    "ios/*.h",
+    "ios/*.m",
+    "ios/*.mm",
+    "android/build.gradle",
+    "android/src/main/AndroidManifest.xml",
+    "android/src/main/java",
+    "README.md",
+    "LICENSE"
+  ],
   "keywords": [
     "react-native",
     "expo",
@@ -31,6 +51,7 @@
   "devDependencies": {
     "@babel/core": "^7.26.0",
     "@types/jest": "^29.2.1",
+    "@types/node": "^22.14.0",
     "@types/react": "~19.2.2",
     "babel-preset-expo": "~57.0.7",
     "eslint": "~9.39.4",

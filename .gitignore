@@ -60,4 +60,3 @@ yarn-error.log
 /ios/Frameworks/
 /android/libs/
 /android/src/main/jniLibs/
-/example/assets/voicevox/

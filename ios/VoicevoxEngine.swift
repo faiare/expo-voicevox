@@ -59,13 +59,13 @@ final class VoicevoxEngine {
     var onnxruntime: OpaquePointer?
     try check(voicevox_onnxruntime_init_once(&onnxruntime))
     guard let onnxruntime else {
-      throw VoicevoxCoreError(code: 0, message: "ONNX Runtime の初期化に失敗しました")
+      throw VoicevoxCoreError(code: 0, message: "failed to initialize the ONNX Runtime")
     }
 
     var openJtalk: OpaquePointer?
     try check(voicevox_open_jtalk_rc_new(openJtalkDictDir, &openJtalk))
     guard let openJtalk else {
-      throw VoicevoxCoreError(code: 0, message: "OpenJTalk 辞書の読み込みに失敗しました")
+      throw VoicevoxCoreError(code: 0, message: "failed to load the OpenJTalk dictionary")
     }
     // Synthesizer が内部で参照を保持するため、生成後は解放してよい。
     defer { voicevox_open_jtalk_rc_delete(openJtalk) }
@@ -78,7 +78,7 @@ final class VoicevoxEngine {
     var synthesizer: OpaquePointer?
     try check(voicevox_synthesizer_new(onnxruntime, openJtalk, options, &synthesizer))
     guard let synthesizer else {
-      throw VoicevoxCoreError(code: 0, message: "Synthesizer の生成に失敗しました")
+      throw VoicevoxCoreError(code: 0, message: "failed to create the synthesizer")
     }
 
     do {
@@ -101,7 +101,7 @@ final class VoicevoxEngine {
       throw VoicevoxNotInitializedError()
     }
     guard let json = voicevox_synthesizer_create_metas_json(synthesizer) else {
-      throw VoicevoxCoreError(code: 0, message: "メタ情報の取得に失敗しました")
+      throw VoicevoxCoreError(code: 0, message: "failed to read the voice metadata")
     }
     defer { voicevox_json_free(json) }
     return String(cString: json)
@@ -126,7 +126,7 @@ final class VoicevoxEngine {
       )
     )
     guard let wav else {
-      throw VoicevoxCoreError(code: 0, message: "音声合成の結果が空です")
+      throw VoicevoxCoreError(code: 0, message: "speech synthesis produced no audio")
     }
     defer { voicevox_wav_free(wav) }
     return Data(bytes: wav, count: Int(wavLength))
@@ -147,7 +147,7 @@ final class VoicevoxEngine {
     var model: OpaquePointer?
     try check(voicevox_voice_model_file_open(path, &model))
     guard let model else {
-      throw VoicevoxCoreError(code: 0, message: "音声モデルを開けませんでした: \(path)")
+      throw VoicevoxCoreError(code: 0, message: "could not open the voice model: \(path)")
     }
     defer { voicevox_voice_model_file_delete(model) }
 

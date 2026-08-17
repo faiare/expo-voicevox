@@ -1,3 +1,9 @@
+# 注意: package.json に `files` があるため、npm-packlist はそちらの許可リストだけを見る。
+# このファイルの内容は tarball の中身に影響しない（`npm pack --dry-run` で確認済み）。
+# 同梱するものを変えるときは package.json の `files` を編集すること。
+#
+# `files` を将来外した場合に備えて、除外したいものを記録として残しておく。
+
 # Exclude all top-level hidden directories by convention
 /.*/
 
@@ -13,3 +19,11 @@ __tests__
 /android/src/test/
 /android/build/
 /example/
+
+# config plugin が prebuild 時に取得する。同梱すると tarball が 100MB を超える。
+/ios/Frameworks/
+/android/libs/
+/android/src/main/jniLibs/
+
+# tsc --build の中間ファイル
+*.tsbuildinfo

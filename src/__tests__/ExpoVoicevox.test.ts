@@ -1,15 +1,26 @@
 import ExpoVoicevoxModule from '../ExpoVoicevoxModule';
-import { finalize, getCharacters, getVersion, initialize, isInitialized, tts } from '../index';
+import {
+  addPrepareProgressListener,
+  finalize,
+  getCharacters,
+  getVersion,
+  initialize,
+  isInitialized,
+  prepareAssets,
+  tts,
+} from '../index';
 
 jest.mock('../ExpoVoicevoxModule', () => ({
   __esModule: true,
   default: {
     getVersion: jest.fn(),
     isInitialized: jest.fn(),
+    prepareAssets: jest.fn(),
     initialize: jest.fn(),
     getMetasJson: jest.fn(),
     tts: jest.fn(),
     finalize: jest.fn(),
+    addListener: jest.fn(),
   },
 }));
 
@@ -38,7 +49,62 @@ describe('isInitialized', () => {
   });
 });
 
+describe('prepareAssets', () => {
+  it('ネイティブへそのまま委譲する', async () => {
+    const paths = { openJtalkDictDir: '/data/dict', voiceModelPaths: ['/data/0.vvm'] };
+    nativeModule.prepareAssets.mockResolvedValue(paths);
+
+    await expect(prepareAssets()).resolves.toEqual(paths);
+  });
+});
+
+describe('addPrepareProgressListener', () => {
+  it('onPrepareProgress を購読する', () => {
+    const listener = jest.fn();
+
+    addPrepareProgressListener(listener);
+
+    expect(nativeModule.addListener).toHaveBeenCalledWith('onPrepareProgress', listener);
+  });
+});
+
 describe('initialize', () => {
+  it('引数なしなら両方 null で渡し、ネイティブに自動解決させる', async () => {
+    nativeModule.initialize.mockResolvedValue(undefined);
+
+    await initialize();
+
+    expect(nativeModule.initialize).toHaveBeenCalledWith({
+      openJtalkDictDir: null,
+      voiceModelPaths: null,
+      cpuNumThreads: 0,
+    });
+  });
+
+  it('cpuNumThreads だけ指定してもパスは null のまま', async () => {
+    nativeModule.initialize.mockResolvedValue(undefined);
+
+    await initialize({ cpuNumThreads: 2 });
+
+    expect(nativeModule.initialize).toHaveBeenCalledWith({
+      openJtalkDictDir: null,
+      voiceModelPaths: null,
+      cpuNumThreads: 2,
+    });
+  });
+
+  it('辞書だけ指定したらモデルは null のまま', async () => {
+    nativeModule.initialize.mockResolvedValue(undefined);
+
+    await initialize({ openJtalkDictDir: '/tmp/dict' });
+
+    expect(nativeModule.initialize).toHaveBeenCalledWith({
+      openJtalkDictDir: '/tmp/dict',
+      voiceModelPaths: null,
+      cpuNumThreads: 0,
+    });
+  });
+
   it('cpuNumThreads を 0 で埋めてネイティブへ渡す', async () => {
     nativeModule.initialize.mockResolvedValue(undefined);
 
@@ -131,7 +197,7 @@ describe('getCharacters', () => {
   it('JSON が配列でなければ throw する', async () => {
     nativeModule.getMetasJson.mockResolvedValue('{}');
 
-    await expect(getCharacters()).rejects.toThrow('配列ではありません');
+    await expect(getCharacters()).rejects.toThrow('is not an array');
   });
 });
 

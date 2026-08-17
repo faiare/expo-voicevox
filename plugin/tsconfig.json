@@ -1,0 +1,30 @@
+{
+  // config plugin は Node が CommonJS として require するので、
+  // ルートの tsconfig（module: esnext / moduleResolution: bundler）とは別建てにする。
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["es2022"],
+    "types": ["node", "jest"],
+    "esModuleInterop": true,
+    "declaration": true,
+    "sourceMap": true,
+    // @expo/config-plugins の d.ts が型定義のない 'xcode' を import しているため必須。
+    "skipLibCheck": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    // internal/module_scripts/{build,prepare}.js が `tsc --build` を使う。
+    "composite": true,
+    // 既定では plugin/tsconfig.tsbuildinfo に出るため、prepare.js が build/ を消しても
+    // tsc が「最新」と判断して何も出力しなくなる（publish 時に plugin/build が空になる）。
+    // 出力先と一緒に消えるよう build/ の中に置く。
+    "tsBuildInfoFile": "./build/tsconfig.tsbuildinfo",
+    "rootDir": "./src",
+    "outDir": "./build"
+  },
+  "include": ["./src"],
+  "exclude": ["**/__tests__/*"]
+}

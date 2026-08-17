@@ -1,12 +1,23 @@
 import { NativeModule, requireNativeModule } from 'expo';
 
-import type { NormalizedVoicevoxInitializeOptions } from './ExpoVoicevox.types';
+import type {
+  ExpoVoicevoxModuleEvents,
+  NormalizedVoicevoxInitializeOptions,
+  VoicevoxAssetPaths,
+} from './ExpoVoicevox.types';
 
-declare class ExpoVoicevoxModule extends NativeModule<{}> {
+declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   /** voicevox-core のバージョン。ネイティブライブラリがロードできているかの確認も兼ねる。 */
   getVersion(): string;
   /** `initialize()` が完了しているか。 */
   isInitialized(): boolean;
+  /**
+   * config plugin が配置したアセットを使える状態にして、絶対パスを返す。
+   *
+   * Android では初回だけ APK 内 assets を端末へ展開する（`assetSource: "download"` なら取得も行う）。
+   * iOS の bundle モードではアプリのバンドルをそのまま読むので即座に返る。冪等。
+   */
+  prepareAssets(): Promise<VoicevoxAssetPaths>;
   /** ONNX Runtime・OpenJTalk・Synthesizer を用意し、音声モデルを読み込む。 */
   initialize(options: NormalizedVoicevoxInitializeOptions): Promise<void>;
   /**

@@ -12,14 +12,11 @@ import {
   View,
 } from 'react-native';
 
-import { prepareVoicevoxAssets, type PreparedVoicevoxAssets } from './src/prepareVoicevoxAssets';
-
 /** トーク合成に使えるのは talk 系のスタイルのみ。 */
 const TALK_STYLE_TYPES = ['talk', 'streaming_talk'];
 
 export default function App() {
   const [version, setVersion] = useState<string | null>(null);
-  const [assets, setAssets] = useState<PreparedVoicevoxAssets | null>(null);
   const [initialized, setInitialized] = useState(false);
   const [characters, setCharacters] = useState<Voicevox.VoicevoxCharacter[]>([]);
   const [styleId, setStyleId] = useState<number | null>(null);
@@ -46,6 +43,20 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    // Android は初回だけ APK 内のアセットを端末へ展開するので、その進捗を出す。
+    // iOS はアプリのバンドルをそのまま読むためイベントは発生しない。
+    const subscription = Voicevox.addPrepareProgressListener((progress) => {
+      const megabytes = (bytes: number) => (bytes / 1024 / 1024).toFixed(0);
+      const detail =
+        progress.totalBytes > 0
+          ? `${megabytes(progress.completedBytes)}/${megabytes(progress.totalBytes)}MB`
+          : `${progress.completedFiles}/${progress.totalFiles}`;
+      setStatus(`アセットを準備しています… ${progress.current} ${detail}`);
+    });
+    return () => subscription.remove();
+  }, []);
+
   const withBusy = useCallback(async (label: string, action: () => Promise<void>) => {
     setBusy(true);
     setError(null);
@@ -59,32 +70,18 @@ export default function App() {
     }
   }, []);
 
-  const handlePrepareAssets = useCallback(
-    () =>
-      withBusy('アセットを展開しています…', async () => {
-        const prepared = await prepareVoicevoxAssets((progress) => {
-          setStatus(`アセットを展開しています… ${progress.completed}/${progress.total} ${progress.current}`);
-        });
-        setAssets(prepared);
-        setStatus('アセットの展開が完了しました');
-      }),
-    [withBusy]
-  );
-
   const handleInitialize = useCallback(
     () =>
       withBusy('初期化しています…', async () => {
-        if (!assets) {
-          throw new Error('先にアセットを展開してください');
-        }
-        await Voicevox.initialize(assets);
+        // 引数なし。app.json の config plugin が配置した辞書とモデルを自動で解決する。
+        await Voicevox.initialize();
         const loaded = await Voicevox.getCharacters();
         setCharacters(loaded);
         setStyleId(findDefaultStyleId(loaded));
         setInitialized(Voicevox.isInitialized());
         setStatus('初期化が完了しました');
       }),
-    [assets, withBusy]
+    [withBusy]
   );
 
   const handleSpeak = useCallback(
@@ -111,23 +108,15 @@ export default function App() {
           <Row label="初期化済み" value={initialized ? 'はい' : 'いいえ'} />
         </Group>
 
-        <Group name="2. アセット">
+        <Group name="2. 初期化">
           <Text style={styles.note}>
-            音声モデルと OpenJTalk 辞書をドキュメントディレクトリへ展開します。合計 160MB 前後あるので初回は時間がかかります。
+            音声モデルと OpenJTalk 辞書は app.json の expo-voicevox plugin が prebuild
+            時に埋め込んでいます。Android は初回のみ端末への展開が走ります。
           </Text>
-          <Button title="アセットを展開" onPress={handlePrepareAssets} disabled={busy} />
-          {assets ? <Row label="辞書" value={assets.openJtalkDictDir} /> : null}
+          <Button title="initialize()" onPress={handleInitialize} disabled={busy} />
         </Group>
 
-        <Group name="3. 初期化">
-          <Button
-            title="initialize()"
-            onPress={handleInitialize}
-            disabled={busy || assets === null}
-          />
-        </Group>
-
-        <Group name="4. 合成">
+        <Group name="3. 合成">
           <Text style={styles.label}>スタイル</Text>
           <View style={styles.styleList}>
             {characters.flatMap((character) =>

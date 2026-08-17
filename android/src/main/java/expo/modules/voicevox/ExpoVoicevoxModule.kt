@@ -9,11 +9,15 @@ import java.io.File
 import java.util.UUID
 import jp.hiroshiba.voicevoxcore.GlobalInfo
 
-/** `initialize()` に渡される JS 側のオプション。 */
+/**
+ * `initialize()` に渡される JS 側のオプション。
+ *
+ * パスが省略された（null の）場合は、config plugin が配置したアセットを自動で解決する。
+ */
 class VoicevoxInitializeOptions : Record {
-  @Field val openJtalkDictDir: String = ""
+  @Field val openJtalkDictDir: String? = null
 
-  @Field val voiceModelPaths: List<String> = emptyList()
+  @Field val voiceModelPaths: List<String>? = null
 
   @Field val cpuNumThreads: Int = 0
 }
@@ -27,8 +31,13 @@ class ExpoVoicevoxModule : Module() {
   /** voicevox-core の Synthesizer は同時実行できないので、重い処理はこのロックで直列化する。 */
   private val engineLock = Any()
 
+  /** config plugin が配置したアセットの解決役。reactContext が要るので遅延生成する。 */
+  private var assets: VoicevoxAssets? = null
+
   override fun definition() = ModuleDefinition {
     Name("ExpoVoicevox")
+
+    Events("onPrepareProgress")
 
     OnDestroy { synchronized(engineLock) { engine.releaseSynthesizer() } }
 
@@ -36,12 +45,37 @@ class ExpoVoicevoxModule : Module() {
 
     Function("isInitialized") { engine.isInitialized }
 
+    AsyncFunction("prepareAssets") {
+      synchronized(engineLock) {
+        val paths = prepareAssets()
+        mapOf(
+          "openJtalkDictDir" to paths.openJtalkDictDir,
+          "voiceModelPaths" to paths.voiceModelPaths
+        )
+      }
+    }
+
     AsyncFunction("initialize") { options: VoicevoxInitializeOptions ->
       synchronized(engineLock) {
-        runWrappingErrors("voicevox-core の初期化に失敗しました") {
+        // 明示パスが両方そろっているときはアセットの準備を一切走らせない
+        // （自前でモデルを管理している利用者に余計なダウンロードをさせないため）。
+        val explicitDict = options.openJtalkDictDir
+        val explicitModels = options.voiceModelPaths
+        val dictDir: String
+        val modelPaths: List<String>
+        if (explicitDict != null && explicitModels != null) {
+          dictDir = explicitDict
+          modelPaths = explicitModels
+        } else {
+          val prepared = prepareAssets()
+          dictDir = explicitDict ?: prepared.openJtalkDictDir
+          modelPaths = explicitModels ?: prepared.voiceModelPaths
+        }
+
+        runWrappingErrors("failed to initialize voicevox-core") {
           engine.initialize(
-            openJtalkDictDir = options.openJtalkDictDir,
-            voiceModelPaths = options.voiceModelPaths,
+            openJtalkDictDir = dictDir,
+            voiceModelPaths = modelPaths,
             cpuNumThreads = options.cpuNumThreads
           )
         }
@@ -50,17 +84,28 @@ class ExpoVoicevoxModule : Module() {
 
     AsyncFunction("getMetasJson") {
       synchronized(engineLock) {
-        runWrappingErrors("メタ情報の取得に失敗しました") { engine.metasJson() }
+        runWrappingErrors("failed to read the voice metadata") { engine.metasJson() }
       }
     }
 
     AsyncFunction("tts") { text: String, styleId: Int ->
       synchronized(engineLock) {
-        runWrappingErrors("音声合成に失敗しました") { writeWavToCache(engine.tts(text, styleId)) }
+        runWrappingErrors("speech synthesis failed") { writeWavToCache(engine.tts(text, styleId)) }
       }
     }
 
     AsyncFunction("finalize") { synchronized(engineLock) { engine.releaseSynthesizer() } }
+  }
+
+  /** config plugin が配置したアセットを使える状態にする。進捗は JS へイベントで流す。 */
+  private fun prepareAssets(): VoicevoxAssetPaths {
+    val context =
+      appContext.reactContext
+        ?: throw VoicevoxException("the Android context is not available yet")
+    val resolver = assets ?: VoicevoxAssets(context).also { assets = it }
+    return runWrappingErrors("failed to prepare the voicevox assets") {
+      resolver.prepare { progress -> sendEvent("onPrepareProgress", progress.toEventMap()) }
+    }
   }
 
   /**
@@ -82,10 +127,10 @@ class ExpoVoicevoxModule : Module() {
   private fun writeWavToCache(wav: ByteArray): String {
     val cacheDir =
       appContext.reactContext?.cacheDir
-        ?: throw VoicevoxException("キャッシュディレクトリを取得できませんでした")
+        ?: throw VoicevoxException("the cache directory is not available")
     val outputDir = File(cacheDir, "expo-voicevox")
     if (!outputDir.exists() && !outputDir.mkdirs()) {
-      throw VoicevoxException("キャッシュディレクトリを作成できませんでした: ${outputDir.absolutePath}")
+      throw VoicevoxException("could not create the cache directory: ${outputDir.absolutePath}")
     }
     val outputFile = File(outputDir, "${UUID.randomUUID()}.wav")
     outputFile.writeBytes(wav)

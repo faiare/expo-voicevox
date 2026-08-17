@@ -1,6 +1,13 @@
 // Reexport the native module. On web, it will be resolved to ExpoVoicevoxModule.web.ts
 // and on native platforms to ExpoVoicevoxModule.ts
-import type { VoicevoxCharacter, VoicevoxInitializeOptions } from './ExpoVoicevox.types';
+import type { EventSubscription } from 'expo-modules-core';
+
+import type {
+  VoicevoxAssetPaths,
+  VoicevoxCharacter,
+  VoicevoxInitializeOptions,
+  VoicevoxPrepareProgress,
+} from './ExpoVoicevox.types';
 import ExpoVoicevoxModule from './ExpoVoicevoxModule';
 
 export * from './ExpoVoicevox.types';
@@ -9,7 +16,7 @@ const MAX_CPU_NUM_THREADS = 65535;
 
 function assertNonEmptyString(value: unknown, name: string): asserts value is string {
   if (typeof value !== 'string' || value.length === 0) {
-    throw new Error(`expo-voicevox: ${name} には空でない文字列を指定してください`);
+    throw new Error(`expo-voicevox: ${name} must be a non-empty string`);
   }
 }
 
@@ -28,21 +35,50 @@ export function isInitialized(): boolean {
 }
 
 /**
+ * config plugin が配置した音声モデルと辞書を使える状態にして、絶対パスを返す。
+ *
+ * `initialize()` が内部で呼ぶので通常は不要。進捗を見せながら先に済ませておきたいときに使う。
+ * 冪等で、2 回目以降は即座に返る。
+ */
+export function prepareAssets(): Promise<VoicevoxAssetPaths> {
+  return ExpoVoicevoxModule.prepareAssets();
+}
+
+/**
+ * アセットの準備の進捗を購読する。
+ *
+ * Android は初回起動時に APK 内のアセットを端末へ展開するため進捗が流れる。
+ * iOS の `assetSource: "bundle"` ではバンドルをそのまま読むのでイベントは発生しない。
+ */
+export function addPrepareProgressListener(
+  listener: (progress: VoicevoxPrepareProgress) => void
+): EventSubscription {
+  return ExpoVoicevoxModule.addListener('onPrepareProgress', listener);
+}
+
+/**
  * 音声合成の準備をする。
  *
- * 辞書・音声モデルは端末のファイルシステム上に展開された状態で、絶対パスを渡すこと。
+ * 引数なしで呼ぶと、`app.json` の config plugin が配置した辞書と音声モデルを自動で解決する。
+ * 自前でアセットを管理する場合は `openJtalkDictDir` と `voiceModelPaths` を絶対パスで渡す。
+ *
  * 処理は重いので、アプリ起動直後ではなく必要になった時点で呼ぶのが望ましい。
  */
-export async function initialize(options: VoicevoxInitializeOptions): Promise<void> {
-  assertNonEmptyString(options?.openJtalkDictDir, 'openJtalkDictDir');
+export async function initialize(options: VoicevoxInitializeOptions = {}): Promise<void> {
+  const openJtalkDictDir = options.openJtalkDictDir;
+  if (openJtalkDictDir !== undefined) {
+    assertNonEmptyString(openJtalkDictDir, 'openJtalkDictDir');
+  }
 
   const voiceModelPaths = options.voiceModelPaths;
-  if (!Array.isArray(voiceModelPaths) || voiceModelPaths.length === 0) {
-    throw new Error('expo-voicevox: voiceModelPaths には最低 1 件の .vvm パスを指定してください');
+  if (voiceModelPaths !== undefined) {
+    if (!Array.isArray(voiceModelPaths) || voiceModelPaths.length === 0) {
+      throw new Error('expo-voicevox: voiceModelPaths must list at least one .vvm path');
+    }
+    voiceModelPaths.forEach((modelPath, index) => {
+      assertNonEmptyString(modelPath, `voiceModelPaths[${index}]`);
+    });
   }
-  voiceModelPaths.forEach((modelPath, index) => {
-    assertNonEmptyString(modelPath, `voiceModelPaths[${index}]`);
-  });
 
   const cpuNumThreads = options.cpuNumThreads ?? 0;
   if (
@@ -51,13 +87,14 @@ export async function initialize(options: VoicevoxInitializeOptions): Promise<vo
     cpuNumThreads > MAX_CPU_NUM_THREADS
   ) {
     throw new Error(
-      `expo-voicevox: cpuNumThreads には 0 以上 ${MAX_CPU_NUM_THREADS} 以下の整数を指定してください`
+      `expo-voicevox: cpuNumThreads must be an integer between 0 and ${MAX_CPU_NUM_THREADS}`
     );
   }
 
+  // 省略されたものは null で渡し、ネイティブ側に自動解決させる。
   await ExpoVoicevoxModule.initialize({
-    openJtalkDictDir: options.openJtalkDictDir,
-    voiceModelPaths: [...voiceModelPaths],
+    openJtalkDictDir: openJtalkDictDir ?? null,
+    voiceModelPaths: voiceModelPaths ? [...voiceModelPaths] : null,
     cpuNumThreads,
   });
 }
@@ -72,7 +109,7 @@ export async function getCharacters(): Promise<VoicevoxCharacter[]> {
   const json = await ExpoVoicevoxModule.getMetasJson();
   const metas: unknown = JSON.parse(json);
   if (!Array.isArray(metas)) {
-    throw new Error('expo-voicevox: メタ情報の JSON が配列ではありません');
+    throw new Error('expo-voicevox: the voice metadata JSON is not an array');
   }
   return metas.map((meta: any) => ({
     name: String(meta?.name ?? ''),
@@ -96,7 +133,7 @@ export async function getCharacters(): Promise<VoicevoxCharacter[]> {
 export function tts(text: string, styleId: number): Promise<string> {
   assertNonEmptyString(text, 'text');
   if (!Number.isInteger(styleId) || styleId < 0) {
-    throw new Error('expo-voicevox: styleId には 0 以上の整数を指定してください');
+    throw new Error('expo-voicevox: styleId must be a non-negative integer');
   }
   return ExpoVoicevoxModule.tts(text, styleId);
 }

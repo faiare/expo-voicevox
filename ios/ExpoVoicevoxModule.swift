@@ -1,12 +1,14 @@
 import ExpoModulesCore
 
 /// `initialize()` に渡される JS 側のオプション。
+///
+/// パスが省略された（null の）場合は、config plugin が配置したアセットを自動で解決する。
 struct VoicevoxInitializeOptions: Record {
   @Field
-  var openJtalkDictDir: String = ""
+  var openJtalkDictDir: String? = nil
 
   @Field
-  var voiceModelPaths: [String] = []
+  var voiceModelPaths: [String]? = nil
 
   @Field
   var cpuNumThreads: Int = 0
@@ -28,6 +30,8 @@ public class ExpoVoicevoxModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ExpoVoicevox")
 
+    Events("onPrepareProgress")
+
     OnDestroy {
       self.engine.releaseSynthesizer()
     }
@@ -40,16 +44,41 @@ public class ExpoVoicevoxModule: Module {
       self.engine.isInitialized
     }
 
+    AsyncFunction("prepareAssets") { () -> [String: Any] in
+      let paths = try self.prepareAssets()
+      return [
+        "openJtalkDictDir": paths.openJtalkDictDir,
+        "voiceModelPaths": paths.voiceModelPaths,
+      ]
+    }
+    .runOnQueue(engineQueue)
+
     AsyncFunction("initialize") { (options: VoicevoxInitializeOptions) in
       guard let cpuNumThreads = UInt16(exactly: options.cpuNumThreads) else {
-        throw VoicevoxException("cpuNumThreads が範囲外です: \(options.cpuNumThreads)")
+        throw VoicevoxException("cpuNumThreads is out of range: \(options.cpuNumThreads)")
       }
+
+      // 明示パスが両方そろっているときはアセットの準備を一切走らせない
+      // （自前でモデルを管理している利用者に余計なダウンロードをさせないため）。
+      let dictDir: String
+      let modelPaths: [String]
+      if let explicitDict = options.openJtalkDictDir, let explicitModels = options.voiceModelPaths {
+        dictDir = explicitDict
+        modelPaths = explicitModels
+      } else {
+        let prepared = try self.prepareAssets()
+        dictDir = options.openJtalkDictDir ?? prepared.openJtalkDictDir
+        modelPaths = options.voiceModelPaths ?? prepared.voiceModelPaths
+      }
+
       do {
         try self.engine.initialize(
-          openJtalkDictDir: options.openJtalkDictDir,
-          voiceModelPaths: options.voiceModelPaths,
+          openJtalkDictDir: dictDir,
+          voiceModelPaths: modelPaths,
           cpuNumThreads: cpuNumThreads
         )
+      } catch let error as VoicevoxException {
+        throw error
       } catch {
         throw VoicevoxException(error.localizedDescription)
       }
@@ -67,7 +96,7 @@ public class ExpoVoicevoxModule: Module {
 
     AsyncFunction("tts") { (text: String, styleId: Int) -> String in
       guard let styleId = UInt32(exactly: styleId) else {
-        throw VoicevoxException("styleId が範囲外です: \(styleId)")
+        throw VoicevoxException("styleId is out of range: \(styleId)")
       }
       do {
         let wav = try self.engine.tts(text: text, styleId: styleId)
@@ -86,6 +115,17 @@ public class ExpoVoicevoxModule: Module {
     .runOnQueue(engineQueue)
   }
 
+  /// config plugin が配置したアセットを使える状態にする。進捗は JS へイベントで流す。
+  private func prepareAssets() throws -> VoicevoxAssetPaths {
+    do {
+      return try VoicevoxAssets.shared.prepare { progress in
+        self.sendEvent("onPrepareProgress", progress.dictionary)
+      }
+    } catch {
+      throw VoicevoxException(error.localizedDescription)
+    }
+  }
+
   /// 合成結果をキャッシュディレクトリへ書き出し、そのパスを返す。
   private func writeWavToCache(_ wav: Data) throws -> String {
     let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -100,7 +140,7 @@ public class ExpoVoicevoxModule: Module {
       try wav.write(to: outputUrl, options: .atomic)
       return outputUrl.path
     } catch {
-      throw VoicevoxException("WAV の書き出しに失敗しました: \(error.localizedDescription)")
+      throw VoicevoxException("failed to write the WAV file: \(error.localizedDescription)")
     }
   }
 }
