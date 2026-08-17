@@ -52,6 +52,7 @@ export default function App() {
   const [surface, setSurface] = useState('');
   const [pronunciation, setPronunciation] = useState('');
   const [accentType, setAccentType] = useState(0);
+  const [priority, setPriority] = useState(5);
   const [wordType, setWordType] = useState<Voicevox.VoicevoxUserDictWordType>('PROPER_NOUN');
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
@@ -235,11 +236,11 @@ export default function App() {
       setError('表記と読みを入力してください');
       return;
     }
-    applyWords([...words, { surface, pronunciation, accentType, wordType }]);
+    applyWords([...words, { surface, pronunciation, accentType, wordType, priority }]);
     setSurface('');
     setPronunciation('');
     setAccentType(0);
-  }, [accentType, applyWords, pronunciation, surface, wordType, words]);
+  }, [accentType, applyWords, priority, pronunciation, surface, wordType, words]);
 
   const selected =
     selectedMora !== null ? phrases[selectedMora.phrase]?.moras[selectedMora.mora] : undefined;
@@ -488,12 +489,26 @@ export default function App() {
             digits={0}
             onChange={setAccentType}
           />
+          <Stepper
+            label="優先度 priority"
+            value={priority}
+            step={1}
+            min={0}
+            max={10}
+            digits={0}
+            onChange={setPriority}
+          />
+          <Text style={styles.note}>
+            既定の辞書に無い語なら priority は既定の 5 で足ります。既にある語の読みを
+            上書きしたいときは priority を上げてください（形態素解析のコスト勝負になります）。
+          </Text>
           <Button title="登録する" onPress={handleAddWord} disabled={busy} />
 
           {words.map((word, index) => (
             <View key={index} style={styles.wordRow}>
               <Text style={styles.value}>
-                {word.surface} → {word.pronunciation}（{word.wordType}, {word.accentType}）
+                {word.surface} → {word.pronunciation}（{word.wordType}, アクセント核{' '}
+                {word.accentType}, 優先度 {word.priority}）
               </Text>
               <Pressable
                 onPress={() => applyWords(words.filter((_, i) => i !== index))}
