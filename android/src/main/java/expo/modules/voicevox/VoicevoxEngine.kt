@@ -1,6 +1,8 @@
 package expo.modules.voicevox
 
+import com.google.gson.GsonBuilder
 import jp.hiroshiba.voicevoxcore.AccelerationMode
+import jp.hiroshiba.voicevoxcore.AudioQuery
 import jp.hiroshiba.voicevoxcore.CharacterMeta
 import jp.hiroshiba.voicevoxcore.blocking.Onnxruntime
 import jp.hiroshiba.voicevoxcore.blocking.OpenJtalk
@@ -24,6 +26,19 @@ class VoicevoxNotInitializedException :
  */
 class VoicevoxEngine {
   private var synthesizer: Synthesizer? = null
+
+  /**
+   * AudioQuery と JS の橋渡しに使う Gson。
+   *
+   * 命名規則は**既定（フィールド名そのまま）で正しい**。voicevox-core の JSON は
+   * snake_case と camelCase の混在で、snake_case にすべき 5 個には
+   * `AudioQuery` / `AccentPhrase` / `Mora` に `@SerializedName` が付いている。
+   * `FieldNamingPolicy` を触ると `speedScale` などまで snake_case になって iOS と食い違う。
+   *
+   * null を省略しないのは、`Mora.consonant` と `consonantLength` の有無が
+   * iOS 側の JSON と揃うようにするため。
+   */
+  private val gson = GsonBuilder().serializeNulls().create()
 
   val isInitialized: Boolean
     get() = synthesizer != null
@@ -62,24 +77,55 @@ class VoicevoxEngine {
    * 揃えてある。JS 側は iOS / Android どちらでも同じ解釈で読める。
    */
   fun metasJson(): String {
-    val synthesizer = this.synthesizer ?: throw VoicevoxNotInitializedException()
     val metas = JSONArray()
-    for (character in synthesizer.metas()) {
+    for (character in requireSynthesizer().metas()) {
       metas.put(toJson(character))
     }
     return metas.toString()
   }
 
   /** テキストを合成して WAV バイト列（ヘッダ付き）を返す。 */
-  fun tts(text: String, styleId: Int): ByteArray {
-    val synthesizer = this.synthesizer ?: throw VoicevoxNotInitializedException()
-    return synthesizer.tts(text, styleId).perform()
+  fun tts(text: String, styleId: Int, enableInterrogativeUpspeak: Boolean): ByteArray =
+    requireSynthesizer().tts(text, styleId).interrogativeUpspeak(enableInterrogativeUpspeak).perform()
+
+  /** AquesTalk 風記法のカナを合成して WAV バイト列を返す。 */
+  fun ttsFromKana(kana: String, styleId: Int, enableInterrogativeUpspeak: Boolean): ByteArray =
+    requireSynthesizer()
+      .ttsFromKana(kana, styleId)
+      .interrogativeUpspeak(enableInterrogativeUpspeak)
+      .perform()
+
+  /** テキストから AudioQuery を生成し、JSON 文字列で返す。 */
+  fun createAudioQueryJson(text: String, styleId: Int): String =
+    gson.toJson(requireSynthesizer().createAudioQuery(text, styleId))
+
+  /** AquesTalk 風記法のカナから AudioQuery を生成し、JSON 文字列で返す。 */
+  fun createAudioQueryFromKanaJson(kana: String, styleId: Int): String =
+    gson.toJson(requireSynthesizer().createAudioQueryFromKana(kana, styleId))
+
+  /** AudioQuery の JSON を合成して WAV バイト列を返す。 */
+  fun synthesis(
+    audioQueryJson: String,
+    styleId: Int,
+    enableInterrogativeUpspeak: Boolean
+  ): ByteArray {
+    val synthesizer = requireSynthesizer()
+    val audioQuery =
+      gson.fromJson(audioQueryJson, AudioQuery::class.java)
+        ?: throw IllegalArgumentException("audioQuery is not a valid AudioQuery JSON")
+    return synthesizer
+      .synthesis(audioQuery, styleId)
+      .interrogativeUpspeak(enableInterrogativeUpspeak)
+      .perform()
   }
 
   fun releaseSynthesizer() {
     // Java API は明示的な close を持たない（finalize で解放される）ため参照だけ落とす。
     synthesizer = null
   }
+
+  private fun requireSynthesizer(): Synthesizer =
+    synthesizer ?: throw VoicevoxNotInitializedException()
 
   private fun toJson(character: CharacterMeta): JSONObject {
     val styles = JSONArray()

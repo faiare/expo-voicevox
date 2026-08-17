@@ -1,13 +1,17 @@
 import ExpoVoicevoxModule from '../ExpoVoicevoxModule';
 import {
   addPrepareProgressListener,
+  createAudioQuery,
+  createAudioQueryFromKana,
   finalize,
   getCharacters,
   getVersion,
   initialize,
   isInitialized,
   prepareAssets,
+  synthesis,
   tts,
+  ttsFromKana,
 } from '../index';
 
 jest.mock('../ExpoVoicevoxModule', () => ({
@@ -19,6 +23,10 @@ jest.mock('../ExpoVoicevoxModule', () => ({
     initialize: jest.fn(),
     getMetasJson: jest.fn(),
     tts: jest.fn(),
+    ttsFromKana: jest.fn(),
+    createAudioQueryJson: jest.fn(),
+    createAudioQueryFromKanaJson: jest.fn(),
+    synthesis: jest.fn(),
     finalize: jest.fn(),
     addListener: jest.fn(),
   },
@@ -206,7 +214,15 @@ describe('tts', () => {
     nativeModule.tts.mockResolvedValue('/tmp/cache/voicevox-1.wav');
 
     await expect(tts('こんにちは', 3)).resolves.toBe('/tmp/cache/voicevox-1.wav');
-    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3);
+    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true);
+  });
+
+  it('疑問文の語尾上げを明示的に無効にできる', async () => {
+    nativeModule.tts.mockResolvedValue('/tmp/cache/voicevox-1.wav');
+
+    await tts('元気ですか', 3, { enableInterrogativeUpspeak: false });
+
+    expect(nativeModule.tts).toHaveBeenCalledWith('元気ですか', 3, false);
   });
 
   it('text が空ならネイティブを呼ばずに throw する', () => {
@@ -217,6 +233,105 @@ describe('tts', () => {
   it.each([-1, 1.5])('styleId が %p なら throw する', (styleId) => {
     expect(() => tts('こんにちは', styleId)).toThrow('styleId');
     expect(nativeModule.tts).not.toHaveBeenCalled();
+  });
+});
+
+describe('ttsFromKana', () => {
+  it('カナと語尾上げの指定をネイティブへ渡す', async () => {
+    nativeModule.ttsFromKana.mockResolvedValue('/tmp/cache/voicevox-2.wav');
+
+    await expect(ttsFromKana("コンニチワ'", 3)).resolves.toBe('/tmp/cache/voicevox-2.wav');
+    expect(nativeModule.ttsFromKana).toHaveBeenCalledWith("コンニチワ'", 3, true);
+  });
+
+  it('kana が空ならネイティブを呼ばずに throw する', () => {
+    expect(() => ttsFromKana('', 3)).toThrow('kana');
+    expect(nativeModule.ttsFromKana).not.toHaveBeenCalled();
+  });
+});
+
+const CORE_AUDIO_QUERY_JSON = JSON.stringify({
+  accent_phrases: [
+    {
+      moras: [
+        {
+          text: 'ア',
+          consonant: null,
+          consonant_length: null,
+          vowel: 'a',
+          vowel_length: 0.1,
+          pitch: 5.5,
+        },
+      ],
+      accent: 1,
+      pause_mora: null,
+      is_interrogative: false,
+    },
+  ],
+  speedScale: 1,
+  pitchScale: 0,
+  intonationScale: 1,
+  volumeScale: 1,
+  prePhonemeLength: 0.1,
+  postPhonemeLength: 0.1,
+  outputSamplingRate: 24000,
+  outputStereo: false,
+  kana: 'ア',
+});
+
+describe('createAudioQuery', () => {
+  it('ネイティブの JSON を構造化して返す', async () => {
+    nativeModule.createAudioQueryJson.mockResolvedValue(CORE_AUDIO_QUERY_JSON);
+
+    const query = await createAudioQuery('あ', 3);
+
+    expect(nativeModule.createAudioQueryJson).toHaveBeenCalledWith('あ', 3);
+    expect(query.speedScale).toBe(1);
+    expect(query.accentPhrases[0].moras[0]).toEqual({
+      text: 'ア',
+      consonant: null,
+      consonantLength: null,
+      vowel: 'a',
+      vowelLength: 0.1,
+      pitch: 5.5,
+    });
+  });
+
+  it('text が空ならネイティブを呼ばずに throw する', async () => {
+    await expect(createAudioQuery('', 3)).rejects.toThrow('text');
+    expect(nativeModule.createAudioQueryJson).not.toHaveBeenCalled();
+  });
+});
+
+describe('createAudioQueryFromKana', () => {
+  it('カナをそのままネイティブへ渡す', async () => {
+    nativeModule.createAudioQueryFromKanaJson.mockResolvedValue(CORE_AUDIO_QUERY_JSON);
+
+    await createAudioQueryFromKana("ア'", 3);
+
+    expect(nativeModule.createAudioQueryFromKanaJson).toHaveBeenCalledWith("ア'", 3);
+  });
+});
+
+describe('synthesis', () => {
+  it('AudioQuery を JSON にしてネイティブへ渡す', async () => {
+    nativeModule.createAudioQueryJson.mockResolvedValue(CORE_AUDIO_QUERY_JSON);
+    nativeModule.synthesis.mockResolvedValue('/tmp/cache/voicevox-3.wav');
+    const query = await createAudioQuery('あ', 3);
+
+    query.speedScale = 1.5;
+    await expect(synthesis(query, 3)).resolves.toBe('/tmp/cache/voicevox-3.wav');
+
+    const [json, styleId, upspeak] = nativeModule.synthesis.mock.calls[0];
+    expect(JSON.parse(json).speedScale).toBe(1.5);
+    expect(JSON.parse(json).accent_phrases).toHaveLength(1);
+    expect(styleId).toBe(3);
+    expect(upspeak).toBe(true);
+  });
+
+  it('壊れた AudioQuery はネイティブへ流さずに throw する', () => {
+    expect(() => synthesis({ speedScale: 1 } as never, 3)).toThrow('audioQuery');
+    expect(nativeModule.synthesis).not.toHaveBeenCalled();
   });
 });
 

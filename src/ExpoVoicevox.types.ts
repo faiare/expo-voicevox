@@ -77,3 +77,66 @@ export type VoicevoxCharacter = {
   speakerUuid: string;
   styles: VoicevoxStyle[];
 };
+
+/**
+ * モーラ（子音 + 母音）。
+ *
+ * `consonant` と `consonantLength` は「両方ある」か「両方 null」かのどちらかでなければならない
+ * （母音だけのモーラは null になる）。片方だけ埋めると voicevox-core が検証で弾く。
+ */
+export type VoicevoxMora = {
+  text: string;
+  consonant: string | null;
+  consonantLength: number | null;
+  vowel: string;
+  vowelLength: number;
+  pitch: number;
+};
+
+/** アクセント句。`accent` はアクセント核の位置（1 始まり、0 は平板）。 */
+export type VoicevoxAccentPhrase = {
+  moras: VoicevoxMora[];
+  accent: number;
+  /** 句のあとの無音。無ければ null。 */
+  pauseMora: VoicevoxMora | null;
+  isInterrogative: boolean;
+};
+
+/**
+ * 合成のパラメータ一式。
+ *
+ * `createAudioQuery()` で作り、フィールドを書き換えてから `synthesis()` に渡す。
+ * 各 `*Scale` は 1.0 が既定値、`*PhonemeLength` は秒。
+ */
+export type VoicevoxAudioQuery = {
+  accentPhrases: VoicevoxAccentPhrase[];
+  /** 話速。 */
+  speedScale: number;
+  /** 音高。 */
+  pitchScale: number;
+  /** 抑揚。 */
+  intonationScale: number;
+  /** 音量。 */
+  volumeScale: number;
+  /** 開始の無音の長さ（秒）。 */
+  prePhonemeLength: number;
+  /** 終了の無音の長さ（秒）。 */
+  postPhonemeLength: number;
+  outputSamplingRate: number;
+  outputStereo: boolean;
+  /** AquesTalk 風記法。voicevox-core が生成したものはここに読みが入る。 */
+  kana: string | null;
+};
+
+/** `tts()` / `synthesis()` / `ttsFromKana()` の合成オプション。 */
+export type VoicevoxSynthesisOptions = {
+  /**
+   * 疑問文の語尾を自動で上げるか。既定は true。
+   *
+   * voicevox-core の既定値には依存せず、JS 側が常に明示してネイティブへ渡す
+   * （iOS と Android で挙動を揃えるため）。
+   *
+   * `synthesis()` では、アクセント句の `isInterrogative` が立っている句に対して働く。
+   */
+  enableInterrogativeUpspeak?: boolean;
+};

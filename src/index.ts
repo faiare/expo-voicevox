@@ -4,11 +4,14 @@ import type { EventSubscription } from 'expo-modules-core';
 
 import type {
   VoicevoxAssetPaths,
+  VoicevoxAudioQuery,
   VoicevoxCharacter,
   VoicevoxInitializeOptions,
   VoicevoxPrepareProgress,
+  VoicevoxSynthesisOptions,
 } from './ExpoVoicevox.types';
 import ExpoVoicevoxModule from './ExpoVoicevoxModule';
+import { parseAudioQuery, stringifyAudioQuery } from './audioQuery';
 
 export * from './ExpoVoicevox.types';
 
@@ -18,6 +21,21 @@ function assertNonEmptyString(value: unknown, name: string): asserts value is st
   if (typeof value !== 'string' || value.length === 0) {
     throw new Error(`expo-voicevox: ${name} must be a non-empty string`);
   }
+}
+
+function assertStyleId(styleId: unknown): asserts styleId is number {
+  if (!Number.isInteger(styleId) || (styleId as number) < 0) {
+    throw new Error('expo-voicevox: styleId must be a non-negative integer');
+  }
+}
+
+/**
+ * 疑問文の語尾上げの指定を解決する。
+ *
+ * voicevox-core の既定値に任せず常に明示するのは、iOS と Android で挙動を揃えるため。
+ */
+function resolveInterrogativeUpspeak(options: VoicevoxSynthesisOptions | undefined): boolean {
+  return options?.enableInterrogativeUpspeak ?? true;
 }
 
 /**
@@ -129,13 +147,72 @@ export async function getCharacters(): Promise<VoicevoxCharacter[]> {
  *
  * WAV はキャッシュディレクトリに書き出される。ブリッジ越しに Base64 を運ばないためのもので、
  * 呼び出し側で不要になったら削除してよい。
+ *
+ * 話速や音高を変えたい場合は `createAudioQuery()` と `synthesis()` を使う。
  */
-export function tts(text: string, styleId: number): Promise<string> {
+export function tts(
+  text: string,
+  styleId: number,
+  options?: VoicevoxSynthesisOptions
+): Promise<string> {
   assertNonEmptyString(text, 'text');
-  if (!Number.isInteger(styleId) || styleId < 0) {
-    throw new Error('expo-voicevox: styleId must be a non-negative integer');
-  }
-  return ExpoVoicevoxModule.tts(text, styleId);
+  assertStyleId(styleId);
+  return ExpoVoicevoxModule.tts(text, styleId, resolveInterrogativeUpspeak(options));
+}
+
+/**
+ * AquesTalk 風記法のカナを音声合成し、書き出した WAV ファイルの絶対パスを返す。
+ *
+ * 例: `"コンニチワ'"`（`'` がアクセント核、`_` が無声化、`/` が句切り、`？` が疑問形）。
+ */
+export function ttsFromKana(
+  kana: string,
+  styleId: number,
+  options?: VoicevoxSynthesisOptions
+): Promise<string> {
+  assertNonEmptyString(kana, 'kana');
+  assertStyleId(styleId);
+  return ExpoVoicevoxModule.ttsFromKana(kana, styleId, resolveInterrogativeUpspeak(options));
+}
+
+/**
+ * テキストから AudioQuery を生成する。
+ *
+ * 返ってきた AudioQuery の `speedScale` などを書き換えて `synthesis()` に渡すと、
+ * 話速・音高・抑揚・音量・前後の無音を調整した音声が得られる。
+ */
+export async function createAudioQuery(text: string, styleId: number): Promise<VoicevoxAudioQuery> {
+  assertNonEmptyString(text, 'text');
+  assertStyleId(styleId);
+  return parseAudioQuery(await ExpoVoicevoxModule.createAudioQueryJson(text, styleId));
+}
+
+/** AquesTalk 風記法のカナから AudioQuery を生成する。 */
+export async function createAudioQueryFromKana(
+  kana: string,
+  styleId: number
+): Promise<VoicevoxAudioQuery> {
+  assertNonEmptyString(kana, 'kana');
+  assertStyleId(styleId);
+  return parseAudioQuery(await ExpoVoicevoxModule.createAudioQueryFromKanaJson(kana, styleId));
+}
+
+/**
+ * AudioQuery を音声合成し、書き出した WAV ファイルの絶対パスを返す。
+ *
+ * `outputSamplingRate` と `outputStereo` もここで効くので、24kHz モノラル以外も出力できる。
+ */
+export function synthesis(
+  audioQuery: VoicevoxAudioQuery,
+  styleId: number,
+  options?: VoicevoxSynthesisOptions
+): Promise<string> {
+  assertStyleId(styleId);
+  return ExpoVoicevoxModule.synthesis(
+    stringifyAudioQuery(audioQuery),
+    styleId,
+    resolveInterrogativeUpspeak(options)
+  );
 }
 
 /** Synthesizer を破棄してメモリを解放する。再度使うには `initialize()` が必要。 */

@@ -71,40 +71,68 @@ public class ExpoVoicevoxModule: Module {
         modelPaths = options.voiceModelPaths ?? prepared.voiceModelPaths
       }
 
-      do {
+      try self.wrappingErrors {
         try self.engine.initialize(
           openJtalkDictDir: dictDir,
           voiceModelPaths: modelPaths,
           cpuNumThreads: cpuNumThreads
         )
-      } catch let error as VoicevoxException {
-        throw error
-      } catch {
-        throw VoicevoxException(error.localizedDescription)
       }
     }
     .runOnQueue(engineQueue)
 
     AsyncFunction("getMetasJson") { () -> String in
-      do {
-        return try self.engine.metasJson()
-      } catch {
-        throw VoicevoxException(error.localizedDescription)
+      try self.wrappingErrors { try self.engine.metasJson() }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("tts") { (text: String, styleId: Int, enableInterrogativeUpspeak: Bool) -> String in
+      try self.synthesize(styleId: styleId) { styleId in
+        try self.engine.tts(
+          text: text,
+          styleId: styleId,
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+        )
       }
     }
     .runOnQueue(engineQueue)
 
-    AsyncFunction("tts") { (text: String, styleId: Int) -> String in
-      guard let styleId = UInt32(exactly: styleId) else {
-        throw VoicevoxException("styleId is out of range: \(styleId)")
+    AsyncFunction("ttsFromKana") {
+      (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool) -> String in
+      try self.synthesize(styleId: styleId) { styleId in
+        try self.engine.ttsFromKana(
+          kana: kana,
+          styleId: styleId,
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+        )
       }
-      do {
-        let wav = try self.engine.tts(text: text, styleId: styleId)
-        return try self.writeWavToCache(wav)
-      } catch let error as VoicevoxException {
-        throw error
-      } catch {
-        throw VoicevoxException(error.localizedDescription)
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("createAudioQueryJson") { (text: String, styleId: Int) -> String in
+      let styleId = try self.checkedStyleId(styleId)
+      return try self.wrappingErrors {
+        try self.engine.createAudioQueryJson(text: text, styleId: styleId)
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("createAudioQueryFromKanaJson") { (kana: String, styleId: Int) -> String in
+      let styleId = try self.checkedStyleId(styleId)
+      return try self.wrappingErrors {
+        try self.engine.createAudioQueryFromKanaJson(kana: kana, styleId: styleId)
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("synthesis") {
+      (audioQueryJson: String, styleId: Int, enableInterrogativeUpspeak: Bool) -> String in
+      try self.synthesize(styleId: styleId) { styleId in
+        try self.engine.synthesis(
+          audioQueryJson: audioQueryJson,
+          styleId: styleId,
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+        )
       }
     }
     .runOnQueue(engineQueue)
@@ -113,6 +141,30 @@ public class ExpoVoicevoxModule: Module {
       self.engine.releaseSynthesizer()
     }
     .runOnQueue(engineQueue)
+  }
+
+  private func checkedStyleId(_ styleId: Int) throws -> UInt32 {
+    guard let styleId = UInt32(exactly: styleId) else {
+      throw VoicevoxException("styleId is out of range: \(styleId)")
+    }
+    return styleId
+  }
+
+  /// voicevox-core 由来のエラーを JS へ流せる形に包む。
+  private func wrappingErrors<T>(_ body: () throws -> T) throws -> T {
+    do {
+      return try body()
+    } catch let error as VoicevoxException {
+      throw error
+    } catch {
+      throw VoicevoxException(error.localizedDescription)
+    }
+  }
+
+  /// 合成系に共通する「styleId を検証し、WAV をキャッシュへ書き出してパスを返す」流れ。
+  private func synthesize(styleId: Int, _ body: (UInt32) throws -> Data) throws -> String {
+    let styleId = try checkedStyleId(styleId)
+    return try wrappingErrors { try self.writeWavToCache(body(styleId)) }
   }
 
   /// config plugin が配置したアセットを使える状態にする。進捗は JS へイベントで流す。

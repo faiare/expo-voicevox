@@ -97,9 +97,8 @@ final class VoicevoxEngine {
 
   /// 読み込み済みの音声モデルのメタ情報を JSON 文字列で返す。
   func metasJson() throws -> String {
-    guard let synthesizer else {
-      throw VoicevoxNotInitializedError()
-    }
+    // この API だけは結果コードではなく `char *` を直接返すので `readJson` は使えない。
+    let synthesizer = try requireSynthesizer()
     guard let json = voicevox_synthesizer_create_metas_json(synthesizer) else {
       throw VoicevoxCoreError(code: 0, message: "failed to read the voice metadata")
     }
@@ -108,28 +107,60 @@ final class VoicevoxEngine {
   }
 
   /// テキストを合成して WAV バイト列（ヘッダ付き）を返す。
-  func tts(text: String, styleId: UInt32) throws -> Data {
-    guard let synthesizer else {
-      throw VoicevoxNotInitializedError()
-    }
+  func tts(text: String, styleId: UInt32, enableInterrogativeUpspeak: Bool) throws -> Data {
+    let synthesizer = try requireSynthesizer()
 
-    var wavLength: UInt = 0
-    var wav: UnsafeMutablePointer<UInt8>?
-    try check(
-      voicevox_synthesizer_tts(
-        synthesizer,
-        text,
-        styleId,
-        voicevox_make_default_tts_options(),
-        &wavLength,
-        &wav
-      )
-    )
-    guard let wav else {
-      throw VoicevoxCoreError(code: 0, message: "speech synthesis produced no audio")
+    var options = voicevox_make_default_tts_options()
+    options.enable_interrogative_upspeak = enableInterrogativeUpspeak
+
+    return try readWav { wavLength, wav in
+      voicevox_synthesizer_tts(synthesizer, text, styleId, options, &wavLength, &wav)
     }
-    defer { voicevox_wav_free(wav) }
-    return Data(bytes: wav, count: Int(wavLength))
+  }
+
+  /// AquesTalk 風記法のカナを合成して WAV バイト列を返す。
+  func ttsFromKana(kana: String, styleId: UInt32, enableInterrogativeUpspeak: Bool) throws -> Data {
+    let synthesizer = try requireSynthesizer()
+
+    var options = voicevox_make_default_tts_options()
+    options.enable_interrogative_upspeak = enableInterrogativeUpspeak
+
+    return try readWav { wavLength, wav in
+      voicevox_synthesizer_tts_from_kana(synthesizer, kana, styleId, options, &wavLength, &wav)
+    }
+  }
+
+  /// テキストから AudioQuery を生成し、JSON 文字列で返す。
+  func createAudioQueryJson(text: String, styleId: UInt32) throws -> String {
+    let synthesizer = try requireSynthesizer()
+    return try readJson { output in
+      voicevox_synthesizer_create_audio_query(synthesizer, text, styleId, &output)
+    }
+  }
+
+  /// AquesTalk 風記法のカナから AudioQuery を生成し、JSON 文字列で返す。
+  func createAudioQueryFromKanaJson(kana: String, styleId: UInt32) throws -> String {
+    let synthesizer = try requireSynthesizer()
+    return try readJson { output in
+      voicevox_synthesizer_create_audio_query_from_kana(synthesizer, kana, styleId, &output)
+    }
+  }
+
+  /// AudioQuery の JSON を合成して WAV バイト列を返す。
+  func synthesis(
+    audioQueryJson: String,
+    styleId: UInt32,
+    enableInterrogativeUpspeak: Bool
+  ) throws -> Data {
+    let synthesizer = try requireSynthesizer()
+
+    var options = voicevox_make_default_synthesis_options()
+    options.enable_interrogative_upspeak = enableInterrogativeUpspeak
+
+    return try readWav { wavLength, wav in
+      voicevox_synthesizer_synthesis(
+        synthesizer, audioQueryJson, styleId, options, &wavLength, &wav)
+    }
   }
 
   func releaseSynthesizer() {
@@ -142,6 +173,38 @@ final class VoicevoxEngine {
   }
 
   // MARK: - Private
+
+  private func requireSynthesizer() throws -> OpaquePointer {
+    guard let synthesizer else {
+      throw VoicevoxNotInitializedError()
+    }
+    return synthesizer
+  }
+
+  /// `char **` へ JSON を書き出す API を呼び、必ず `voicevox_json_free` してから String にする。
+  private func readJson(_ body: (inout UnsafeMutablePointer<CChar>?) -> Int32) throws -> String {
+    var output: UnsafeMutablePointer<CChar>?
+    try check(body(&output))
+    guard let output else {
+      throw VoicevoxCoreError(code: 0, message: "voicevox-core returned no JSON")
+    }
+    defer { voicevox_json_free(output) }
+    return String(cString: output)
+  }
+
+  /// WAV を書き出す API を呼び、必ず `voicevox_wav_free` してから Data にする。
+  private func readWav(
+    _ body: (inout UInt, inout UnsafeMutablePointer<UInt8>?) -> Int32
+  ) throws -> Data {
+    var wavLength: UInt = 0
+    var wav: UnsafeMutablePointer<UInt8>?
+    try check(body(&wavLength, &wav))
+    guard let wav else {
+      throw VoicevoxCoreError(code: 0, message: "speech synthesis produced no audio")
+    }
+    defer { voicevox_wav_free(wav) }
+    return Data(bytes: wav, count: Int(wavLength))
+  }
 
   private func loadVoiceModel(into synthesizer: OpaquePointer, path: String) throws {
     var model: OpaquePointer?

@@ -27,7 +27,24 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
    */
   getMetasJson(): Promise<string>;
   /** テキストを合成し、書き出した WAV ファイルの絶対パスを返す。 */
-  tts(text: string, styleId: number): Promise<string>;
+  tts(text: string, styleId: number, enableInterrogativeUpspeak: boolean): Promise<string>;
+  /** AquesTalk 風記法のカナを合成し、書き出した WAV ファイルの絶対パスを返す。 */
+  ttsFromKana(kana: string, styleId: number, enableInterrogativeUpspeak: boolean): Promise<string>;
+  /**
+   * テキストから AudioQuery を生成し、voicevox-core の JSON 文字列のまま返す。
+   *
+   * 構造化と命名の変換は `src/audioQuery.ts` で行う。JSON のキーは voicevox-core の定義どおり
+   * snake_case と camelCase の混在で、iOS / Android どちらも同じ形になるようにしてある。
+   */
+  createAudioQueryJson(text: string, styleId: number): Promise<string>;
+  /** AquesTalk 風記法のカナから AudioQuery を生成する。 */
+  createAudioQueryFromKanaJson(kana: string, styleId: number): Promise<string>;
+  /** AudioQuery の JSON を合成し、書き出した WAV ファイルの絶対パスを返す。 */
+  synthesis(
+    audioQueryJson: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean
+  ): Promise<string>;
   /** Synthesizer を破棄する。再度使うには `initialize()` が必要。 */
   finalize(): Promise<void>;
 }

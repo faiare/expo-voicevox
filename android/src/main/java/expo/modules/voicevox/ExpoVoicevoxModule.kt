@@ -88,9 +88,46 @@ class ExpoVoicevoxModule : Module() {
       }
     }
 
-    AsyncFunction("tts") { text: String, styleId: Int ->
+    AsyncFunction("tts") { text: String, styleId: Int, enableInterrogativeUpspeak: Boolean ->
       synchronized(engineLock) {
-        runWrappingErrors("speech synthesis failed") { writeWavToCache(engine.tts(text, styleId)) }
+        runWrappingErrors("speech synthesis failed") {
+          writeWavToCache(engine.tts(text, styleId, enableInterrogativeUpspeak))
+        }
+      }
+    }
+
+    AsyncFunction("ttsFromKana") { kana: String, styleId: Int, enableInterrogativeUpspeak: Boolean ->
+      synchronized(engineLock) {
+        runWrappingErrors("speech synthesis failed") {
+          writeWavToCache(engine.ttsFromKana(kana, styleId, enableInterrogativeUpspeak))
+        }
+      }
+    }
+
+    AsyncFunction("createAudioQueryJson") { text: String, styleId: Int ->
+      synchronized(engineLock) {
+        runWrappingErrors("failed to create the audio query") {
+          engine.createAudioQueryJson(text, styleId)
+        }
+      }
+    }
+
+    AsyncFunction("createAudioQueryFromKanaJson") { kana: String, styleId: Int ->
+      synchronized(engineLock) {
+        runWrappingErrors("failed to create the audio query") {
+          engine.createAudioQueryFromKanaJson(kana, styleId)
+        }
+      }
+    }
+
+    AsyncFunction("synthesis") {
+      audioQueryJson: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean ->
+      synchronized(engineLock) {
+        runWrappingErrors("speech synthesis failed") {
+          writeWavToCache(engine.synthesis(audioQueryJson, styleId, enableInterrogativeUpspeak))
+        }
       }
     }
 

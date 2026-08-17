@@ -24,6 +24,18 @@ class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   async tts(): Promise<never> {
     throw new Error(UNSUPPORTED);
   }
+  async ttsFromKana(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async createAudioQueryJson(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async createAudioQueryFromKanaJson(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async synthesis(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
   async finalize(): Promise<void> {
     // 何も確保していないので何もしない。
   }
