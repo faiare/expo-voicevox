@@ -1,6 +1,9 @@
 import ExpoVoicevoxModule from '../ExpoVoicevoxModule';
 import {
   addPrepareProgressListener,
+  audioQueryFromAccentPhrases,
+  createAccentPhrases,
+  createAccentPhrasesFromKana,
   createAudioQuery,
   createAudioQueryFromKana,
   finalize,
@@ -9,6 +12,9 @@ import {
   initialize,
   isInitialized,
   prepareAssets,
+  replaceMoraData,
+  replaceMoraPitch,
+  replacePhonemeLength,
   synthesis,
   tts,
   ttsFromKana,
@@ -27,6 +33,12 @@ jest.mock('../ExpoVoicevoxModule', () => ({
     createAudioQueryJson: jest.fn(),
     createAudioQueryFromKanaJson: jest.fn(),
     synthesis: jest.fn(),
+    createAccentPhrasesJson: jest.fn(),
+    createAccentPhrasesFromKanaJson: jest.fn(),
+    replaceMoraDataJson: jest.fn(),
+    replacePhonemeLengthJson: jest.fn(),
+    replaceMoraPitchJson: jest.fn(),
+    audioQueryFromAccentPhrasesJson: jest.fn(),
     finalize: jest.fn(),
     addListener: jest.fn(),
   },
@@ -332,6 +344,64 @@ describe('synthesis', () => {
   it('壊れた AudioQuery はネイティブへ流さずに throw する', () => {
     expect(() => synthesis({ speedScale: 1 } as never, 3)).toThrow('audioQuery');
     expect(nativeModule.synthesis).not.toHaveBeenCalled();
+  });
+});
+
+const CORE_ACCENT_PHRASES_JSON = JSON.stringify(JSON.parse(CORE_AUDIO_QUERY_JSON).accent_phrases);
+
+describe('アクセント句の編集', () => {
+  it('createAccentPhrases はネイティブの JSON を構造化する', async () => {
+    nativeModule.createAccentPhrasesJson.mockResolvedValue(CORE_ACCENT_PHRASES_JSON);
+
+    const phrases = await createAccentPhrases('あ', 3);
+
+    expect(nativeModule.createAccentPhrasesJson).toHaveBeenCalledWith('あ', 3);
+    expect(phrases).toHaveLength(1);
+    expect(phrases[0].isInterrogative).toBe(false);
+  });
+
+  it('createAccentPhrasesFromKana はカナをそのまま渡す', async () => {
+    nativeModule.createAccentPhrasesFromKanaJson.mockResolvedValue(CORE_ACCENT_PHRASES_JSON);
+
+    await createAccentPhrasesFromKana("ア'", 3);
+
+    expect(nativeModule.createAccentPhrasesFromKanaJson).toHaveBeenCalledWith("ア'", 3);
+  });
+
+  it.each([
+    ['replaceMoraData', replaceMoraData, 'replaceMoraDataJson'],
+    ['replacePhonemeLength', replacePhonemeLength, 'replacePhonemeLengthJson'],
+    ['replaceMoraPitch', replaceMoraPitch, 'replaceMoraPitchJson'],
+  ] as const)('%s は編集後のアクセント句を JSON にして渡す', async (_name, fn, nativeName) => {
+    nativeModule.createAccentPhrasesJson.mockResolvedValue(CORE_ACCENT_PHRASES_JSON);
+    nativeModule[nativeName].mockResolvedValue(CORE_ACCENT_PHRASES_JSON);
+    const phrases = await createAccentPhrases('あ', 3);
+
+    phrases[0].accent = 2;
+    phrases[0].isInterrogative = true;
+    await fn(phrases, 3);
+
+    const [json, styleId] = nativeModule[nativeName].mock.calls[0];
+    expect(JSON.parse(json)[0]).toMatchObject({ accent: 2, is_interrogative: true });
+    expect(styleId).toBe(3);
+  });
+
+  it('audioQueryFromAccentPhrases はアクセント句から AudioQuery を組み立てる', async () => {
+    nativeModule.audioQueryFromAccentPhrasesJson.mockResolvedValue(CORE_AUDIO_QUERY_JSON);
+    nativeModule.createAccentPhrasesJson.mockResolvedValue(CORE_ACCENT_PHRASES_JSON);
+    const phrases = await createAccentPhrases('あ', 3);
+
+    const query = await audioQueryFromAccentPhrases(phrases);
+
+    expect(JSON.parse(nativeModule.audioQueryFromAccentPhrasesJson.mock.calls[0][0])).toHaveLength(
+      1
+    );
+    expect(query.speedScale).toBe(1);
+  });
+
+  it('壊れたアクセント句はネイティブへ流さずに throw する', async () => {
+    await expect(replaceMoraData([{ accent: 1 } as never], 3)).rejects.toThrow('accentPhrases[0]');
+    expect(nativeModule.replaceMoraDataJson).not.toHaveBeenCalled();
   });
 });
 

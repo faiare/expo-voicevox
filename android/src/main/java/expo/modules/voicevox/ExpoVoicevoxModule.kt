@@ -120,6 +120,53 @@ class ExpoVoicevoxModule : Module() {
       }
     }
 
+    AsyncFunction("createAccentPhrasesJson") { text: String, styleId: Int ->
+      synchronized(engineLock) {
+        runWrappingErrors("failed to create the accent phrases") {
+          engine.createAccentPhrasesJson(text, styleId)
+        }
+      }
+    }
+
+    AsyncFunction("createAccentPhrasesFromKanaJson") { kana: String, styleId: Int ->
+      synchronized(engineLock) {
+        runWrappingErrors("failed to create the accent phrases") {
+          engine.createAccentPhrasesFromKanaJson(kana, styleId)
+        }
+      }
+    }
+
+    AsyncFunction("replaceMoraDataJson") { accentPhrasesJson: String, styleId: Int ->
+      synchronized(engineLock) {
+        runWrappingErrors("failed to replace the mora data") {
+          engine.replaceMoraDataJson(accentPhrasesJson, styleId)
+        }
+      }
+    }
+
+    AsyncFunction("replacePhonemeLengthJson") { accentPhrasesJson: String, styleId: Int ->
+      synchronized(engineLock) {
+        runWrappingErrors("failed to replace the phoneme length") {
+          engine.replacePhonemeLengthJson(accentPhrasesJson, styleId)
+        }
+      }
+    }
+
+    AsyncFunction("replaceMoraPitchJson") { accentPhrasesJson: String, styleId: Int ->
+      synchronized(engineLock) {
+        runWrappingErrors("failed to replace the mora pitch") {
+          engine.replaceMoraPitchJson(accentPhrasesJson, styleId)
+        }
+      }
+    }
+
+    // 推論を伴わないので直列化する必要が無い。
+    AsyncFunction("audioQueryFromAccentPhrasesJson") { accentPhrasesJson: String ->
+      runWrappingErrors("failed to build the audio query") {
+        engine.audioQueryFromAccentPhrasesJson(accentPhrasesJson)
+      }
+    }
+
     AsyncFunction("synthesis") {
       audioQueryJson: String,
       styleId: Int,

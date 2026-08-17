@@ -3,6 +3,7 @@
 import type { EventSubscription } from 'expo-modules-core';
 
 import type {
+  VoicevoxAccentPhrase,
   VoicevoxAssetPaths,
   VoicevoxAudioQuery,
   VoicevoxCharacter,
@@ -11,7 +12,12 @@ import type {
   VoicevoxSynthesisOptions,
 } from './ExpoVoicevox.types';
 import ExpoVoicevoxModule from './ExpoVoicevoxModule';
-import { parseAudioQuery, stringifyAudioQuery } from './audioQuery';
+import {
+  parseAccentPhrases,
+  parseAudioQuery,
+  stringifyAccentPhrases,
+  stringifyAudioQuery,
+} from './audioQuery';
 
 export * from './ExpoVoicevox.types';
 
@@ -195,6 +201,87 @@ export async function createAudioQueryFromKana(
   assertNonEmptyString(kana, 'kana');
   assertStyleId(styleId);
   return parseAudioQuery(await ExpoVoicevoxModule.createAudioQueryFromKanaJson(kana, styleId));
+}
+
+/**
+ * テキストからアクセント句の配列を生成する。
+ *
+ * 読みやアクセントを直したいときに使う。編集後は `audioQueryFromAccentPhrases()` で
+ * AudioQuery に組み立てて `synthesis()` へ渡す。
+ */
+export async function createAccentPhrases(
+  text: string,
+  styleId: number
+): Promise<VoicevoxAccentPhrase[]> {
+  assertNonEmptyString(text, 'text');
+  assertStyleId(styleId);
+  return parseAccentPhrases(await ExpoVoicevoxModule.createAccentPhrasesJson(text, styleId));
+}
+
+/** AquesTalk 風記法のカナからアクセント句の配列を生成する。 */
+export async function createAccentPhrasesFromKana(
+  kana: string,
+  styleId: number
+): Promise<VoicevoxAccentPhrase[]> {
+  assertNonEmptyString(kana, 'kana');
+  assertStyleId(styleId);
+  return parseAccentPhrases(
+    await ExpoVoicevoxModule.createAccentPhrasesFromKanaJson(kana, styleId)
+  );
+}
+
+/**
+ * アクセント句の音素長と音高を、指定したスタイルで生成し直す。
+ *
+ * `accent` や `isInterrogative` を書き換えたあとに呼ぶと、その読み方に合った音になる。
+ */
+export async function replaceMoraData(
+  accentPhrases: VoicevoxAccentPhrase[],
+  styleId: number
+): Promise<VoicevoxAccentPhrase[]> {
+  assertStyleId(styleId);
+  return parseAccentPhrases(
+    await ExpoVoicevoxModule.replaceMoraDataJson(stringifyAccentPhrases(accentPhrases), styleId)
+  );
+}
+
+/** アクセント句の音素長（発音の長さ）だけを生成し直す。音高は保つ。 */
+export async function replacePhonemeLength(
+  accentPhrases: VoicevoxAccentPhrase[],
+  styleId: number
+): Promise<VoicevoxAccentPhrase[]> {
+  assertStyleId(styleId);
+  return parseAccentPhrases(
+    await ExpoVoicevoxModule.replacePhonemeLengthJson(
+      stringifyAccentPhrases(accentPhrases),
+      styleId
+    )
+  );
+}
+
+/** アクセント句の音高だけを生成し直す。音素長は保つ。 */
+export async function replaceMoraPitch(
+  accentPhrases: VoicevoxAccentPhrase[],
+  styleId: number
+): Promise<VoicevoxAccentPhrase[]> {
+  assertStyleId(styleId);
+  return parseAccentPhrases(
+    await ExpoVoicevoxModule.replaceMoraPitchJson(stringifyAccentPhrases(accentPhrases), styleId)
+  );
+}
+
+/**
+ * アクセント句の配列から AudioQuery を組み立てる。
+ *
+ * 合成パラメータ（`speedScale` など）は既定値で埋められ、`kana` は null になる。
+ * この API はモデルの推論を行わないので、`initialize()` の前でも呼べる。
+ */
+export async function audioQueryFromAccentPhrases(
+  accentPhrases: VoicevoxAccentPhrase[]
+): Promise<VoicevoxAudioQuery> {
+  return parseAudioQuery(
+    await ExpoVoicevoxModule.audioQueryFromAccentPhrasesJson(stringifyAccentPhrases(accentPhrases))
+  );
 }
 
 /**

@@ -36,6 +36,24 @@ class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   async synthesis(): Promise<never> {
     throw new Error(UNSUPPORTED);
   }
+  async createAccentPhrasesJson(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async createAccentPhrasesFromKanaJson(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async replaceMoraDataJson(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async replacePhonemeLengthJson(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async replaceMoraPitchJson(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async audioQueryFromAccentPhrasesJson(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
   async finalize(): Promise<void> {
     // 何も確保していないので何もしない。
   }

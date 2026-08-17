@@ -39,6 +39,18 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
   createAudioQueryJson(text: string, styleId: number): Promise<string>;
   /** AquesTalk 風記法のカナから AudioQuery を生成する。 */
   createAudioQueryFromKanaJson(kana: string, styleId: number): Promise<string>;
+  /** テキストから AccentPhrase 配列を生成し、JSON 文字列で返す。 */
+  createAccentPhrasesJson(text: string, styleId: number): Promise<string>;
+  /** AquesTalk 風記法のカナから AccentPhrase 配列を生成する。 */
+  createAccentPhrasesFromKanaJson(kana: string, styleId: number): Promise<string>;
+  /** AccentPhrase 配列の音素長と音高を、指定のスタイルで生成し直す。 */
+  replaceMoraDataJson(accentPhrasesJson: string, styleId: number): Promise<string>;
+  /** AccentPhrase 配列の音素長だけを生成し直す。 */
+  replacePhonemeLengthJson(accentPhrasesJson: string, styleId: number): Promise<string>;
+  /** AccentPhrase 配列の音高だけを生成し直す。 */
+  replaceMoraPitchJson(accentPhrasesJson: string, styleId: number): Promise<string>;
+  /** AccentPhrase 配列から AudioQuery を組み立てる。Synthesizer を必要としない。 */
+  audioQueryFromAccentPhrasesJson(accentPhrasesJson: string): Promise<string>;
   /** AudioQuery の JSON を合成し、書き出した WAV ファイルの絶対パスを返す。 */
   synthesis(
     audioQueryJson: string,

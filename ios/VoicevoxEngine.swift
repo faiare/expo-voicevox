@@ -146,6 +146,63 @@ final class VoicevoxEngine {
     }
   }
 
+  /// テキストから AccentPhrase 配列を生成し、JSON 文字列で返す。
+  func createAccentPhrasesJson(text: String, styleId: UInt32) throws -> String {
+    let synthesizer = try requireSynthesizer()
+    return try readJson { output in
+      voicevox_synthesizer_create_accent_phrases(synthesizer, text, styleId, &output)
+    }
+  }
+
+  /// AquesTalk 風記法のカナから AccentPhrase 配列を生成し、JSON 文字列で返す。
+  func createAccentPhrasesFromKanaJson(kana: String, styleId: UInt32) throws -> String {
+    let synthesizer = try requireSynthesizer()
+    return try readJson { output in
+      voicevox_synthesizer_create_accent_phrases_from_kana(synthesizer, kana, styleId, &output)
+    }
+  }
+
+  /// AccentPhrase 配列の音素長と音高を生成し直す。
+  func replaceMoraDataJson(accentPhrasesJson: String, styleId: UInt32) throws -> String {
+    let synthesizer = try requireSynthesizer()
+    return try readJson { output in
+      voicevox_synthesizer_replace_mora_data(synthesizer, accentPhrasesJson, styleId, &output)
+    }
+  }
+
+  /// AccentPhrase 配列の音素長だけを生成し直す。
+  func replacePhonemeLengthJson(accentPhrasesJson: String, styleId: UInt32) throws -> String {
+    let synthesizer = try requireSynthesizer()
+    return try readJson { output in
+      voicevox_synthesizer_replace_phoneme_length(synthesizer, accentPhrasesJson, styleId, &output)
+    }
+  }
+
+  /// AccentPhrase 配列の音高だけを生成し直す。
+  func replaceMoraPitchJson(accentPhrasesJson: String, styleId: UInt32) throws -> String {
+    let synthesizer = try requireSynthesizer()
+    return try readJson { output in
+      voicevox_synthesizer_replace_mora_pitch(synthesizer, accentPhrasesJson, styleId, &output)
+    }
+  }
+
+  /// AccentPhrase 配列から AudioQuery を組み立てる。
+  ///
+  /// 推論を行わないので Synthesizer を必要としない（C API も自由関数になっている）。
+  static func audioQueryFromAccentPhrasesJson(_ accentPhrasesJson: String) throws -> String {
+    var output: UnsafeMutablePointer<CChar>?
+    let code = voicevox_audio_query_create_from_accent_phrases(accentPhrasesJson, &output)
+    guard code == voicevoxResultOk else {
+      let message = voicevox_error_result_to_message(code).map { String(cString: $0) } ?? "不明なエラー"
+      throw VoicevoxCoreError(code: code, message: message)
+    }
+    guard let output else {
+      throw VoicevoxCoreError(code: 0, message: "voicevox-core returned no JSON")
+    }
+    defer { voicevox_json_free(output) }
+    return String(cString: output)
+  }
+
   /// AudioQuery の JSON を合成して WAV バイト列を返す。
   func synthesis(
     audioQueryJson: String,

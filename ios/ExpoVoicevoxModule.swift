@@ -125,6 +125,55 @@ public class ExpoVoicevoxModule: Module {
     }
     .runOnQueue(engineQueue)
 
+    AsyncFunction("createAccentPhrasesJson") { (text: String, styleId: Int) -> String in
+      let styleId = try self.checkedStyleId(styleId)
+      return try self.wrappingErrors {
+        try self.engine.createAccentPhrasesJson(text: text, styleId: styleId)
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("createAccentPhrasesFromKanaJson") { (kana: String, styleId: Int) -> String in
+      let styleId = try self.checkedStyleId(styleId)
+      return try self.wrappingErrors {
+        try self.engine.createAccentPhrasesFromKanaJson(kana: kana, styleId: styleId)
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("replaceMoraDataJson") { (accentPhrasesJson: String, styleId: Int) -> String in
+      let styleId = try self.checkedStyleId(styleId)
+      return try self.wrappingErrors {
+        try self.engine.replaceMoraDataJson(accentPhrasesJson: accentPhrasesJson, styleId: styleId)
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("replacePhonemeLengthJson") { (accentPhrasesJson: String, styleId: Int) -> String
+      in
+      let styleId = try self.checkedStyleId(styleId)
+      return try self.wrappingErrors {
+        try self.engine.replacePhonemeLengthJson(
+          accentPhrasesJson: accentPhrasesJson, styleId: styleId)
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("replaceMoraPitchJson") { (accentPhrasesJson: String, styleId: Int) -> String in
+      let styleId = try self.checkedStyleId(styleId)
+      return try self.wrappingErrors {
+        try self.engine.replaceMoraPitchJson(accentPhrasesJson: accentPhrasesJson, styleId: styleId)
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    // 推論を伴わないので直列キューに載せる必要が無い。
+    AsyncFunction("audioQueryFromAccentPhrasesJson") { (accentPhrasesJson: String) -> String in
+      try self.wrappingErrors {
+        try VoicevoxEngine.audioQueryFromAccentPhrasesJson(accentPhrasesJson)
+      }
+    }
+
     AsyncFunction("synthesis") {
       (audioQueryJson: String, styleId: Int, enableInterrogativeUpspeak: Bool) -> String in
       try self.synthesize(styleId: styleId) { styleId in
