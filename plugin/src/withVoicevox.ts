@@ -75,6 +75,9 @@ export function collectWarnings(props: ResolvedVoicevoxProps): string[] {
   return warnings;
 }
 
+/** 利用規約の告知をプロセス内で 1 回に絞るためのフラグ。 */
+let termsPrinted = false;
+
 const withVoicevox: ConfigPlugin<ExpoVoicevoxPluginProps | void> = (config, props) => {
   const resolved = resolveProps(props ?? {});
 
@@ -85,7 +88,11 @@ const withVoicevox: ConfigPlugin<ExpoVoicevoxPluginProps | void> = (config, prop
     console.warn(`expo-voicevox: warning: ${warning}`);
   }
   // 音声モデルを同梱しない設定なら、クレジット表記の義務も発生しないので出さない。
-  if (resolved.voiceModels.length > 0) {
+  //
+  // prebuild は設定を複数回解決する（platform ごと、--clean の前後）ので、
+  // `createRunOncePlugin` だけでは 11 行の告知が何度も流れる。プロセス内で 1 回に絞る。
+  if (resolved.voiceModels.length > 0 && !termsPrinted) {
+    termsPrinted = true;
     printTerms((line) => console.log(`expo-voicevox: ${line}`));
   }
 
