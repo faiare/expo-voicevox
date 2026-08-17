@@ -9,10 +9,32 @@ version = '0.1.0'
 android {
   namespace "expo.modules.voicevox"
   defaultConfig {
+    // voicevoxcore-android が minSdkVersion 26 を要求する。
+    minSdk 26
     versionCode 1
     versionName "0.1.0"
+    ndk {
+      // voicevox_core / ONNX Runtime が配布されているのは arm64-v8a と x86_64 のみ。
+      abiFilters "arm64-v8a", "x86_64"
+    }
+  }
+  packagingOptions {
+    // React Native も libc++_shared.so を持ち込むため、重複しても落とさない。
+    pickFirst "**/libc++_shared.so"
   }
   lintOptions {
     abortOnError false
   }
+}
+
+dependencies {
+  // `npm run setup:voicevox` が java_packages.zip の AAR を展開して置く。
+  // voicevoxcore-android は Maven Central 未公開（VOICEVOX/voicevox_core#651）なので、
+  // ローカル Maven リポジトリではなく jar として直接取り込む
+  // （ローカルリポジトリはアプリ側の依存解決からは見えない）。
+  implementation fileTree(dir: 'libs', include: ['*.jar'])
+  // 上記 jar が実行時に使う依存。こちらは Maven Central にある。
+  implementation("com.google.code.gson:gson:2.10.1")
+  implementation("jakarta.validation:jakarta.validation-api:3.0.2")
+  implementation("jakarta.annotation:jakarta.annotation-api:2.1.1")
 }

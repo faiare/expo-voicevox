@@ -23,6 +23,12 @@ config.resolver.extraNodeModules = {
   'expo-voicevox': '..',
 };
 
+// voicevox-core のモデル（.vvm）と OpenJTalk 辞書（.dic / .bin / .def / COPYING.txt）を
+// バンドルアセットとして扱えるようにする。実行時にファイルシステムへ展開して使う。
+config.resolver.assetExts = [
+  ...new Set([...config.resolver.assetExts, 'vvm', 'dic', 'bin', 'def', 'txt']),
+];
+
 config.watchFolders = [path.resolve(__dirname, '..')];
 
 config.transformer.getTransformOptions = async () => ({

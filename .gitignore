@@ -55,3 +55,9 @@ yarn-error.log
 
 # Expo
 .expo/*
+
+# voicevox-core (npm run setup:voicevox で取得する。リポジトリには含めない)
+/ios/Frameworks/
+/android/libs/
+/android/src/main/jniLibs/
+/example/assets/voicevox/

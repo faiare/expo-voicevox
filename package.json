@@ -11,7 +11,8 @@
     "test": "node internal/module_scripts/test.js",
     "prepare": "node internal/module_scripts/prepare.js",
     "open:ios": "node internal/module_scripts/open-ios.js",
-    "open:android": "node internal/module_scripts/open-android.js"
+    "open:android": "node internal/module_scripts/open-android.js",
+    "setup:voicevox": "node scripts/fetch-voicevox-core.mjs"
   },
   "keywords": [
     "react-native",
@@ -30,15 +31,16 @@
   "devDependencies": {
     "@babel/core": "^7.26.0",
     "@types/jest": "^29.2.1",
-    "@types/react": "~19.1.1",
-    "babel-preset-expo": "~55.0.8",
+    "@types/react": "~19.2.2",
+    "babel-preset-expo": "~57.0.7",
     "eslint": "~9.39.4",
     "eslint-config-universe": "^15.0.3",
     "expo": "^57.0.13",
+    "expo-modules-core": "~57.0.11",
     "jest": "^29.7.0",
-    "jest-expo": "~55.0.9",
+    "jest-expo": "~57.0.4",
     "prettier": "^3.0.0",
-    "react-native": "0.82.1",
+    "react-native": "0.86.2",
     "typescript": "^5.9.2"
   },
   "jest": {
