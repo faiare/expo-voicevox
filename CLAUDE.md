@@ -23,6 +23,8 @@ npm run lint           # eslint src/ plugin/src/ scripts/
 npm test               # jest (roots: src/)
 npm test plugin        # jest (roots: plugin/src/、plugin/jest.config.js)
 npm run prepare        # build/ と plugin/build/ を消して tsc 実行（publish 前フル build）
+npm run changeset      # リリースノート用の .changeset/*.md を対話で作る
+npm run release:version # changeset version + package-lock.json の同期（CI が呼ぶ。手で叩かない）
 npm run setup:voicevox # voicevox-core のバイナリを取得（開発者用）
 npm run gen:vvm-catalog # VVM のキャラクター対応表を再生成（メンテ用・要ネットワーク）
 npm run refresh:artifact-digests # 配布物の size / sha256 の固定表を作り直す（メンテ用・要ネットワーク）
@@ -81,6 +83,28 @@ CI 特有の前提が 3 つある。
 - **`npm ci` はルートの `package-lock.json` が `package.json` と同期していないと即失敗する**。ローカルの `npm install` は黙って動き続けるので気付けない。依存を触ったら lock も一緒にコミットすること。
 - **`npm ci` は `prepare`（`internal/module_scripts/prepare.js`）を走らせる**ので、build/ と plugin/build/ の tsc はこの時点で通っている必要がある。逆に言えば prebuild が `app.plugin.js` から require する `plugin/build/withVoicevox` もこれで用意される。
 - **`example/android` は生成物なのでリポジトリに無い**。Gradle を回すには prebuild が要り、そこで config plugin が 130MB 超を取得する。`~/.cache/expo-voicevox` を `actions/cache` で使い回しており、キーは `plugin/src/core/versions.ts` / `plugin/src/core/artifacts.generated.ts` / `example/app.json` のハッシュ。バージョンや `voices` を変えると当然取り直しになる。
+
+### リリース（changesets + npm Trusted Publishing）
+
+main へのマージだけでリリースが進む。手で `npm version` や `npm publish` を叩くことはない。
+
+1. 変更を入れる PR に `npm run changeset` で `.changeset/*.md` を足す（patch / minor / major と要約）。リリース不要な変更なら足さなくてよい。
+2. main にマージされると `.github/workflows/publish.yml` が動く。`.changeset/*.md` が残っていれば **version PR**（`changeset-release/main` ブランチ）を作る・更新する。中身は `package.json` の version、`CHANGELOG.md`、`package-lock.json` の 3 つ。
+3. その version PR をマージすると、同じワークフローが今度は publish 側に入り、tarball を作って npm に publish し、`v0.1.1` 形式の git tag と GitHub Release を作る。
+
+**ワークフローのファイル名 `publish.yml` は変えてはいけない**。npm の Trusted Publisher は「リポジトリ + ワークフローファイル名」で照合するので、改名すると OIDC 認証が通らなくなる。npm トークンは使っていない（`id-token: write` を持つ publish ジョブだけが短命トークンを受け取る）。
+
+ジョブは公式ガイド通り `select-mode` → `version` / `pack` → `publish` に割ってある。OIDC のトークンを受け取るジョブを最小にするための分割なので、まとめてはいけない。`workflow_dispatch` は任意のブランチから流せるので、publish ジョブだけ `if: github.ref == 'refs/heads/main'` で縛ってある（これが無いと、未公開バージョンを持つ作業ブランチから手動実行したときにそのブランチのコードが npm に出る）。
+
+npm の Trusted Publisher には任意項目の Environment name があるが、**設定していない**。publish 直前に人の承認を挟むのが主目的の機能で、単独メンテナのこのリポジトリでは version PR のマージがすでにその役割を果たしているため。付けるなら GitHub の environment 作成・publish ジョブの `environment:` 追加・npm 側の入力を**同時に**やること（片方だけ設定したときの照合挙動は npm のドキュメントに明記が無い）。
+
+エージェント向けの注意点が 3 つある。
+
+- **`changeset version` は `package-lock.json` を更新しない**。放置すると次の `npm ci` が lock 不一致で落ちるので、version ジョブは `changeset version` そのままではなく `npm run release:version`（`changeset version && npm install --package-lock-only --ignore-scripts`）を呼んでいる。
+- **version PR では `ci.yml` が回らない**。`GITHUB_TOKEN` で作られた PR はワークフローを起こさないという GitHub の仕様。npm の公開は取り消せないので、代わりに publish 前の `pack` ジョブで `npm ci`（= lock 検証 + prepare の tsc）と `npm test` / `npm test plugin` を通している。version PR でも CI を回したいなら GitHub App トークンを `changesets/action/version` に渡す形にする必要がある。
+- **`CHANGELOG.md` は npm の強制同梱対象ではない**。`files` が許可リストなので、明示的に列挙していないと tarball から落ちる（`README` / `LICENSE` と違って npm-packlist の常時同梱リストに入っていない）。
+
+`.changeset/config.json` は `access: "public"`、changelog は `@changesets/changelog-github`（CHANGELOG に PR とコミットのリンクが入る。version ジョブが `GITHUB_TOKEN` を env で渡している。これは changesets/action 自体の認証とは別物）。パッケージが 1 つだけのリポジトリなので、タグは `<name>@<version>` ではなく `v<version>` になる。
 
 ## アーキテクチャ
 

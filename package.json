@@ -10,6 +10,8 @@
     "lint": "eslint src/ plugin/src/ scripts/",
     "test": "node internal/module_scripts/test.js",
     "prepare": "node internal/module_scripts/prepare.js",
+    "changeset": "changeset",
+    "release:version": "changeset version && npm install --package-lock-only --ignore-scripts",
     "open:ios": "node internal/module_scripts/open-ios.js",
     "open:android": "node internal/module_scripts/open-android.js",
     "setup:voicevox": "tsc --build plugin && node scripts/fetch-voicevox-core.mjs",
@@ -32,6 +34,7 @@
     "android/src/main/AndroidManifest.xml",
     "android/src/main/java",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "keywords": [
@@ -56,9 +59,10 @@
   "author": "faiare <faiare@holoneko.com> (faiare)",
   "license": "MIT",
   "homepage": "https://github.com/faiare/expo-voicevox#readme",
-  "dependencies": {},
   "devDependencies": {
     "@babel/core": "^7.26.0",
+    "@changesets/changelog-github": "^1.0.0",
+    "@changesets/cli": "^3.0.0",
     "@types/jest": "^29.2.1",
     "@types/node": "^22.14.0",
     "@types/react": "~19.2.2",
