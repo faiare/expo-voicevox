@@ -1,6 +1,7 @@
 import { createRunOncePlugin, type ConfigPlugin } from 'expo/config-plugins';
 
 import { withVoicevoxAndroid } from './android/withVoicevoxAndroid';
+import { printTerms } from './core/terms';
 import { withVoicevoxIos } from './ios/withVoicevoxIos';
 import { resolveProps } from './resolveProps';
 import type { ExpoVoicevoxPluginProps, ResolvedVoicevoxProps } from './types';
@@ -82,6 +83,10 @@ const withVoicevox: ConfigPlugin<ExpoVoicevoxPluginProps | void> = (config, prop
   }
   for (const warning of collectWarnings(resolved)) {
     console.warn(`expo-voicevox: warning: ${warning}`);
+  }
+  // 音声モデルを同梱しない設定なら、クレジット表記の義務も発生しないので出さない。
+  if (resolved.voiceModels.length > 0) {
+    printTerms((line) => console.log(`expo-voicevox: ${line}`));
   }
 
   config = withVoicevoxIos(config, resolved);

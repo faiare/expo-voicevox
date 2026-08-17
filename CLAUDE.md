@@ -8,7 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - 対象プラットフォームは **iOS / Android のみ**。`expo-module.config.json` の `platforms` も `["apple", "android"]` のみ。
 - `src/ExpoVoicevoxModule.web.ts` はテンプレート由来の web スタブ。web はサポート対象外なので、API 追加時に web 実装を作り込む必要はない（バンドラの解決を壊さないためにファイル自体は残す）。
-- 音声合成 API（`getVersion` / `isInitialized` / `initialize` / `getCharacters` / `tts` / `finalize`）は実装済み。アセットの取得と配置は `plugin/` の config plugin が担う。
+- 音声合成 API は実装済み。基本（`getVersion` / `isInitialized` / `prepareAssets` / `initialize` / `getCharacters` / `tts` / `finalize`）に加え、AudioQuery 一式（`createAudioQuery` / `createAudioQueryFromKana` / `synthesis` / `ttsFromKana`）、アクセント句編集（`createAccentPhrases` 系 / `replaceMoraData` / `replacePhonemeLength` / `replaceMoraPitch` / `audioQueryFromAccentPhrases`）、ユーザー辞書（`setUserDictWords` / `loadUserDictFile` / `saveUserDictFile`）が揃っている。アセットの取得と配置は `plugin/` の config plugin が担う。
+- **未対応**は歌唱合成（SING）とモデルの実行時アンロードのみ。ストリーミング合成は voicevox_core 0.17.0 自体に API が無い（C ヘッダに `stream` の出現が 0 件）ので「未対応」ではなく「上流に無い」。
 
 ## コマンド
 
@@ -24,6 +25,7 @@ npm test plugin        # jest (roots: plugin/src/、plugin/jest.config.js)
 npm run prepare        # build/ と plugin/build/ を消して tsc 実行（publish 前フル build）
 npm run setup:voicevox # voicevox-core のバイナリを取得（開発者用）
 npm run gen:vvm-catalog # VVM のキャラクター対応表を再生成（メンテ用・要ネットワーク）
+npm run refresh:artifact-digests # 配布物の size / sha256 の固定表を作り直す（メンテ用・要ネットワーク）
 npm run open:ios       # example/ios を Xcode で開く
 npm run open:android   # example/android を Android Studio で開く
 ```
@@ -92,7 +94,30 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
 - **iOS**: `ios/ExpoVoicevox.podspec` の `source_files` は `"*.{h,m,mm,swift}"`（`ios/` 直下のみ）。再帰 glob にすると `Frameworks/` 配下の `voicevox_core.h` までコンパイル対象に入るため意図的に絞ってある。**新しい Swift ファイルは `ios/` 直下に置くこと**（サブディレクトリだと拾われない）。xcframework は `vendored_frameworks` で持ち込む。`s.static_framework = true`、デプロイメントターゲットは iOS 16.4。
 - **Android**: `android/build.gradle` は `expo-module-gradle-plugin` 前提の最小構成。ネイティブ共有ライブラリは `android/src/main/jniLibs/<abi>/` に置く。voicevox-core が配布しているのは **`arm64-v8a` と `x86_64` のみ**で、ABI の絞り込みは gradle.properties の `reactNativeArchitectures` で行う（`expo-build-properties` の `buildArchs` と同じ経路）。
 - **モデル・辞書ファイル**: voicevox-core は VVM モデルと OpenJTalk 辞書を実行時にファイルパスで読む（Java API も `VoiceModelFile(String)` / `OpenJtalk(String)` のみで FD 版が無い）。iOS はフォルダ参照でバンドルに載せて `.app` 内をそのまま読むので展開不要、**Android は APK 内 assets に実パスが無いので `noBackupFilesDir` への展開が必須**。`filesDir` を使うと 173MB が Android Auto Backup（上限 25MB）の対象になって壊れるので使わない。
-- **同期/非同期**: 合成処理は重い。`Function` ではなく `AsyncFunction`（iOS/Android 共通）で公開し、JS スレッドをブロックしないこと。
+- **同期/非同期**: 合成処理は重い。`Function` ではなく `AsyncFunction`（iOS/Android 共通）で公開し、JS スレッドをブロックしないこと。同期で公開しているのは `getVersion` と `isInitialized` だけで、`isInitialized` は直列キュー / ロックの外から読まれるため iOS は `NSLock` で守った Bool、Android は `@Volatile` にしてある。**`engineQueue.sync` で借りてはいけない**（数秒かかる合成の完了まで JS スレッドが止まる）。
+
+### AudioQuery のブリッジ（重要）
+
+AudioQuery と AccentPhrase は **voicevox-core の JSON 文字列**でブリッジを通す。iOS の C API は JSON しか受け付けず、Android の Java API もオブジェクトの内部表現が Gson の JSON なので、これが両プラットフォームを一致させる最短経路になる。構造化と命名変換は `src/audioQuery.ts` の 1 箇所だけ（`getCharacters` と同じ方針）。
+
+- **JSON のキーは snake_case と camelCase の混在**。snake_case なのは `accent_phrases` / `pause_mora` / `is_interrogative` / `consonant_length` / `vowel_length` の 5 個だけで、`speedScale` などの AudioQuery 直下のフィールドは camelCase のまま。jar の `@SerializedName` で確認できる。
+- したがって **Android の Gson は `FieldNamingPolicy` を触ってはいけない**。既定（フィールド名そのまま）が正しい。`LOWER_CASE_WITH_UNDERSCORES` にすると `speedScale` まで変換されて iOS と食い違う。null を省略しないよう `serializeNulls()` だけ設定してある。
+- 疑問文の語尾上げ（`enableInterrogativeUpspeak`）は **JS 側が常に明示して渡す**。iOS の `voicevox_make_default_tts_options()` は true を返すが、Android の `Synthesizer$TtsConfigurator` はフィールドを初期化せず Java 既定の false になるため、ネイティブの既定値に任せると挙動が割れる。
+
+### ユーザー辞書
+
+`voicevox_open_jtalk_rc_use_user_dict` のヘッダに「**この関数を呼び出した後にユーザー辞書を変更した場合、再度この関数を呼び出す必要がある**」と明記されている。そのため:
+
+- 両 OS で **OpenJTalk のハンドルを `VoicevoxEngine` が保持**している（Synthesizer を作った直後に捨ててはいけない）。`release()` は Synthesizer と OpenJTalk を解放し、ユーザー辞書は次の `initialize()` のために残す。
+- JS の API は**全置換（`setUserDictWords`）**にしてある。追加・削除を個別に扱う形にすると再適用の呼び忘れが無言で効かないバグになる。単語の UUID は辞書を作り直すたびに振り直されるので JS へは渡さない。
+- **読み出す API は作らない**。`voicevox_user_dict_to_json` が返すのは MeCab 形式（`word_type` を持たず品詞から逆引きする）で、Android の `UserDict.toHashMap()` が返す 5 フィールドの `UserDictWord` と形が違い、両 OS で同じ値を返せない。
+- iOS で辞書を差し替えるときは **`use_user_dict` を成功させてから旧辞書を `voicevox_user_dict_delete`** する。破棄済みの辞書に触るとプロセスごと落ちる。
+
+### C API を Swift から呼ぶときの型の曖昧さ
+
+`VoicevoxResultCode` / `VoicevoxAccelerationMode` / `VoicevoxUserDictWordType` は「enum タグ」と「int32_t の typedef」が両方ヘッダにあり、Swift では型名として曖昧になる。**値は `Int32` として扱い、`Int32(VOICEVOX_XXX.rawValue)` で取り出す**こと。
+
+また C の enum 定数は `voicevox_core` を import しているファイルからしか見えない。`ios/ExpoVoicevoxModule.swift` は import していないので、定数の引き当ては `ios/VoicevoxEngine.swift` 側に置く。
 
 ### config plugin（`plugin/`）
 
@@ -106,7 +131,7 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
 
 #### エージェント向けの落とし穴
 
-- **`package.json` の `files` を指定すると `.npmignore` は完全に無視される**（npm-packlist はこの許可リストだけを見る）。`ios` / `android` をディレクトリごと書くと、plugin が prebuild 時に取得する `ios/Frameworks` `android/libs` `android/src/main/jniLibs` や Gradle の `android/build` まで tarball に入り 100MB を超える。必要なパスだけを列挙すること。変更したら必ず `npm pack --dry-run --json --ignore-scripts` で中身を確認する（正常値: 90 ファイル前後 / 80KB 前後。最大のファイルは `plugin/build/vvm/catalog.generated.js` の約 36KB）。ネイティブバイナリが 1 つでも混ざれば MB 単位になるので、桁で判断できる。
+- **`package.json` の `files` を指定すると `.npmignore` は完全に無視される**（npm-packlist はこの許可リストだけを見る）。`ios` / `android` をディレクトリごと書くと、plugin が prebuild 時に取得する `ios/Frameworks` `android/libs` `android/src/main/jniLibs` や Gradle の `android/build` まで tarball に入り 100MB を超える。必要なパスだけを列挙すること。変更したら必ず `npm pack --dry-run --json --ignore-scripts` で中身を確認する（正常値: 95 ファイル前後 / tarball 105KB 前後・展開後 400KB 前後。最大のファイルは `plugin/build/vvm/catalog.generated.js` の約 36KB）。ネイティブバイナリが 1 つでも混ざれば MB 単位になるので、桁で判断できる。
 - **`plugin/tsconfig.json` の `tsBuildInfoFile` は `./build/` の中を指すこと**。既定では `plugin/tsconfig.tsbuildinfo` に出るため、`internal/module_scripts/prepare.js` が `plugin/build` を消しても `tsc --build` が「最新」と判断して何も出力せず、**publish 時に `plugin/build` が空になる**。
 - **`plugin/jest.config.js` は `transform` を上書きしている**。`jest-expo/node` プリセット（`getNodePreset()`）は babel-jest のオプションを `caller` だけで置き換えるため、素の jest-expo プリセットが入れている `babel-preset-expo` が落ちて TypeScript を解釈できなくなる。
 - **config plugin から `resolveFrom(projectRoot, '@faiare/expo-voicevox')` は使えない**。`example/package.json` の `nativeModulesDir: ".."` は autolinking 専用でモジュール解決には効かず、example から `@faiare/expo-voicevox` は resolve できない。パッケージルートは `__dirname` 基準で求めること。同じ理由で `example/app.json` の plugin 指定は `"../app.plugin.js"` という相対パス形式になる（利用者向けの README には `"@faiare/expo-voicevox"` 形式を書く）。
@@ -114,7 +139,7 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
 
 ### バージョン注意
 
-- モジュール本体の devDependencies は expo `^57.0.13` / react-native `0.82.1` / TypeScript `^5.9.2`、example は react-native `0.86.2` / TypeScript `~6.0.3` と**食い違っている**（テンプレート生成時の差）。型エラーやビルド差異が出たらまずここを疑う。
+- モジュール本体の devDependencies は expo `^57.0.13` / TypeScript `^5.9.2`、example は TypeScript `~6.0.3` と**食い違っている**（テンプレート生成時の差）。型エラーやビルド差異が出たらまずここを疑う。react-native は両方 `0.86.2` で揃っている。
 - Android は新アーキテクチャ有効（`newArchEnabled=true`）、Hermes 有効。
 
 ### Expo のドキュメント参照

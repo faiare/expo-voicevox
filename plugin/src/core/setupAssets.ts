@@ -31,16 +31,12 @@ export type PreparedAsset = {
   sourcePath: string;
 };
 
-/** `.vvm` と利用規約をキャッシュへ用意し、配置元のパスを返す。 */
+/** `.vvm` をキャッシュへ用意し、配置元のパスを返す。 */
 export async function ensureVoiceModels(
   context: AssetSetupContext,
   models: ResolvedVoiceModel[]
 ): Promise<PreparedAsset[]> {
-  const { cache, skipIntegrityCheck, versions, log } = context;
-  if (models.length === 0) {
-    return [];
-  }
-
+  const { cache, skipIntegrityCheck, log } = context;
   const prepared: PreparedAsset[] = [];
 
   for (const model of models) {
@@ -54,6 +50,21 @@ export async function ensureVoiceModels(
     });
     prepared.push({ name: model.fileName, sourcePath: download.filePath });
   }
+
+  return prepared;
+}
+
+/**
+ * 音声モデルの利用規約をキャッシュへ用意し、配置元のパスを返す。
+ *
+ * `assetSource` に関係なくアプリへ同梱する。数 KB のテキストしかないうえ、
+ * クレジット表記の条件がキャラクターごとに違うので、端末上に必ず現物がある状態にしておく。
+ */
+export async function ensureVoiceModelLicenses(
+  context: AssetSetupContext
+): Promise<PreparedAsset[]> {
+  const { cache, skipIntegrityCheck, versions, log } = context;
+  const prepared: PreparedAsset[] = [];
 
   for (const fileName of VOICE_MODEL_LICENSE_FILES) {
     const url = voiceModelUrl(versions.voiceModel, fileName);

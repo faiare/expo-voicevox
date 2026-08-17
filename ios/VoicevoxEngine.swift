@@ -68,8 +68,15 @@ final class VoicevoxEngine {
   /// ユーザー辞書。`release()` では解放せず、再 `initialize()` をまたいで残す。
   private var userDict: OpaquePointer?
 
+  /// `isInitialized` は JS スレッドから同期的に呼ばれるので、状態だけ別途ロックで守る。
+  ///
+  /// ハンドル操作用の直列キューを `sync` で借りると、数秒かかる合成の完了まで
+  /// JS スレッドを止めてしまう。読み書きするのはこの Bool だけに留める。
+  private let stateLock = NSLock()
+  private var initialized = false
+
   var isInitialized: Bool {
-    synthesizer != nil
+    stateLock.withLock { initialized }
   }
 
   deinit {
@@ -136,6 +143,7 @@ final class VoicevoxEngine {
     self.onnxruntime = onnxruntime
     self.openJtalk = openJtalk
     self.synthesizer = synthesizer
+    stateLock.withLock { initialized = true }
   }
 
   /// 読み込み済みの音声モデルのメタ情報を JSON 文字列で返す。
@@ -314,6 +322,7 @@ final class VoicevoxEngine {
     openJtalk = nil
     // onnxruntime は init_once で得た共有参照であり、解放する API が無いので参照だけ落とす。
     onnxruntime = nil
+    stateLock.withLock { initialized = false }
   }
 
   // MARK: - Private

@@ -16,7 +16,11 @@ import { withVoicevoxFolderReference } from './withVoicevoxFolderReference';
 import { placeAssets, type PlacementEntry } from '../assetPlacement';
 import { VOICEVOX_RESOURCE_DIR } from '../constants';
 import { createCache } from '../core/cache';
-import { ensureOpenJtalkDictionary, ensureVoiceModels } from '../core/setupAssets';
+import {
+  ensureOpenJtalkDictionary,
+  ensureVoiceModelLicenses,
+  ensureVoiceModels,
+} from '../core/setupAssets';
 import { ensureIosFrameworks } from '../core/setupIos';
 import { packageRoot } from '../packageRoot';
 import { isDeploymentTargetAtLeast } from '../resolveProps';
@@ -39,14 +43,19 @@ export const withVoicevoxIos: ConfigPlugin<ResolvedVoicevoxProps> = (config, pro
         log,
       });
 
+      const assetContext = {
+        versions: props.versions,
+        cache,
+        skipIntegrityCheck: props.skipIntegrityCheck,
+        log,
+      };
+
       const entries: PlacementEntry[] = [];
+      // 利用規約は download モードでも同梱する（数 KB しかなく、クレジット表記の根拠になる）。
+      if (props.voiceModels.length > 0) {
+        entries.push(...(await ensureVoiceModelLicenses(assetContext)));
+      }
       if (props.assetSource === 'bundle') {
-        const assetContext = {
-          versions: props.versions,
-          cache,
-          skipIntegrityCheck: props.skipIntegrityCheck,
-          log,
-        };
         entries.push(...(await ensureVoiceModels(assetContext, props.voiceModels)));
         if (props.openJtalkDictionary) {
           entries.push(await ensureOpenJtalkDictionary(assetContext));

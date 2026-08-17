@@ -98,6 +98,26 @@ async function fetchToFile(
   return { sha256: hash.digest('hex'), size };
 }
 
+/**
+ * 期待値が固定表に無い場合に警告する。
+ *
+ * 固定表（`artifacts.generated.ts` と VVM のカタログ）は既定のバージョンしか持たないので、
+ * 利用者が `coreVersion` などを上書きすると検証できなくなる。黙って素通りさせると
+ * 「検証されている」と誤解されるため、必ず 1 行出す。
+ */
+function warnIfUnpinned(
+  expected: { sha256: string | null; size: number | null },
+  url: string,
+  log: ((message: string) => void) | undefined
+): void {
+  if (expected.sha256 == null || expected.size == null) {
+    log?.(
+      `warning: no pinned checksum for ${url}; the download cannot be verified ` +
+        '(this happens when a version is overridden in the plugin config)'
+    );
+  }
+}
+
 function verify(
   actual: { sha256: string; size: number },
   expected: { sha256: string | null; size: number | null },
@@ -125,6 +145,11 @@ function verify(
 export async function downloadToCache(options: DownloadOptions): Promise<DownloadResult> {
   const { url, cache, sha256, size, skipIntegrityCheck = false, log } = options;
   const filePath = path.join(cache.downloads, cacheFileNameFor(url));
+
+  // キャッシュに当たった場合も出す。検証されていない事実はキャッシュの有無で変わらない。
+  if (!skipIntegrityCheck) {
+    warnIfUnpinned({ sha256, size }, url, log);
+  }
 
   const marker = readMarker(filePath);
   if (marker) {

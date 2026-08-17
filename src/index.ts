@@ -391,7 +391,15 @@ export function saveUserDictFile(path: string): Promise<void> {
   return ExpoVoicevoxModule.saveUserDictFile(path);
 }
 
-/** Synthesizer を破棄してメモリを解放する。再度使うには `initialize()` が必要。 */
+/**
+ * Synthesizer を破棄する。再度使うには `initialize()` が必要。
+ *
+ * iOS は `voicevox_synthesizer_delete` を呼ぶので即座に解放される。
+ * Android は Java API に明示的な close が無く、参照を手放して GC に委ねるため
+ * 実際に解放されるタイミングは保証されない。
+ *
+ * ユーザー辞書はここでは破棄されず、次の `initialize()` にも引き継がれる。
+ */
 export function finalize(): Promise<void> {
   return ExpoVoicevoxModule.finalize();
 }

@@ -150,10 +150,73 @@ await Voicevox.finalize();
 | `addPrepareProgressListener(cb)` | 同期 | アセット準備の進捗を購読する |
 | `initialize(options?)` | 非同期 | ONNX Runtime / OpenJTalk / Synthesizer を用意し、音声モデルを読み込む |
 | `getCharacters()` | 非同期 | 読み込み済みモデルのキャラクターとスタイル |
-| `tts(text, styleId)` | 非同期 | 合成した WAV のファイルパスを返す |
+| `tts(text, styleId, options?)` | 非同期 | 合成した WAV のファイルパスを返す |
+| `ttsFromKana(kana, styleId, options?)` | 非同期 | AquesTalk 風記法のカナから合成する |
+| `createAudioQuery(text, styleId)` | 非同期 | 合成パラメータ（AudioQuery）を生成する |
+| `createAudioQueryFromKana(kana, styleId)` | 非同期 | カナから AudioQuery を生成する |
+| `synthesis(audioQuery, styleId, options?)` | 非同期 | AudioQuery を合成する |
+| `createAccentPhrases(text, styleId)` | 非同期 | アクセント句の配列を生成する |
+| `createAccentPhrasesFromKana(kana, styleId)` | 非同期 | カナからアクセント句を生成する |
+| `replaceMoraData(phrases, styleId)` | 非同期 | 音素長と音高を生成し直す |
+| `replacePhonemeLength(phrases, styleId)` | 非同期 | 音素長だけを生成し直す |
+| `replaceMoraPitch(phrases, styleId)` | 非同期 | 音高だけを生成し直す |
+| `audioQueryFromAccentPhrases(phrases)` | 非同期 | アクセント句から AudioQuery を組み立てる |
+| `setUserDictWords(words)` | 非同期 | ユーザー辞書を差し替える |
+| `loadUserDictFile(path)` / `saveUserDictFile(path)` | 非同期 | 辞書ファイルの読み書き |
 | `finalize()` | 非同期 | Synthesizer を破棄する |
 
 WAV はキャッシュディレクトリに書き出される。ブリッジ越しに Base64 を運ばないための設計で、不要になったら呼び出し側で削除してよい。
+
+`finalize()` は iOS では即座に解放されるが、Android は Java API に明示的な close が無いため参照を手放して GC に委ねる（解放のタイミングは保証されない）。
+
+### 話速・音高を変える
+
+`tts()` は既定のパラメータで合成する。調整したいときは AudioQuery を経由する。
+
+```ts
+const query = await Voicevox.createAudioQuery('こんにちは', 3);
+query.speedScale = 1.3;      // 話速
+query.pitchScale = 0.05;     // 音高
+query.intonationScale = 1.2; // 抑揚
+query.volumeScale = 1.0;     // 音量
+query.prePhonemeLength = 0.1;  // 開始の無音（秒）
+query.postPhonemeLength = 0.1; // 終了の無音（秒）
+const wavPath = await Voicevox.synthesis(query, 3);
+```
+
+`outputSamplingRate` と `outputStereo` もここで指定できるので、24kHz モノラル以外も出力できる。
+
+疑問文の語尾上げは既定で有効。切るには `{ enableInterrogativeUpspeak: false }` を渡す。
+
+### 読みとアクセントを直す
+
+アクセント句を取り出して編集し、AudioQuery に組み立て直す。
+
+```ts
+const phrases = await Voicevox.createAccentPhrases('端に寄る', 3);
+phrases[0].accent = 1; // アクセント核の位置（1 始まり、0 は平板）
+const adjusted = await Voicevox.replaceMoraData(phrases, 3);
+const query = await Voicevox.audioQueryFromAccentPhrases(adjusted);
+const wavPath = await Voicevox.synthesis(query, 3);
+```
+
+モーラの `pitch` や `vowelLength` を直接書き換えることもできる。その場合は `replaceMoraData()` を呼ばずにそのまま組み立てる（呼ぶと上書きされる）。
+
+### ユーザー辞書
+
+固有名詞など、既定の辞書では読みを誤る語を登録する。
+
+```ts
+await Voicevox.setUserDictWords([
+  { surface: '四国めたん', pronunciation: 'シコクメタン', accentType: 4, wordType: 'PROPER_NOUN' },
+]);
+```
+
+`setUserDictWords()` は**全置換**で、呼ぶたびに辞書を作り直して OpenJTalk へ適用し直す。voicevox-core は「辞書を変更したら再適用が必要」という仕様なので、追加・削除を個別に扱う API にすると再適用の呼び忘れが無言で効かないバグになる。呼び出し側は自分の単語リストを唯一の状態として持ち、変更のたびにこれを呼べばよい。
+
+`initialize()` の前でも呼べる。設定した辞書は `finalize()` をまたいで残る。
+
+登録済みの単語を読み出す API は用意していない。voicevox-core が返す形が iOS（MeCab 形式で品詞から `wordType` を逆引きする）と Android（5 フィールドのみ）で食い違っており、両プラットフォームで同じ値を返せないため。
 
 ### 準備の進捗を出す
 
@@ -255,9 +318,14 @@ npm pack
 - VOICEVOX 音声モデル (VVM) / VOICEVOX ONNX Runtime: 独自の利用規約。**VOICEVOX を利用したことがわかるクレジット表記が必要**
 - OpenJTalk 辞書: BSD-3-Clause。著作権表示の再掲が必要
 
-規約本文（`TERMS.txt` / `README.txt`）と辞書の `COPYING` はアプリへ同梱される。キャラクターごとに条件が異なり、企業利用に事前確認が必要なものもあるので `TERMS.txt` を確認すること。
+音声モデルの規約本文（`TERMS.txt` / `README.txt`）は `assetSource` に関係なくアプリへ同梱される。辞書の `COPYING` は辞書本体に含まれるので、`assetSource: "download"` では初回起動時の取得と同時に端末へ置かれる。
+
+キャラクターごとに条件が異なり、企業利用に事前確認が必要なものもあるので `TERMS.txt` を確認すること。`npx expo prebuild` を実行すると、この要件がログにも出る。
 
 ## 現時点で扱っていないもの
 
-AudioQuery の編集・アクセント調整・カナ入力合成・歌唱合成・ユーザー辞書・ストリーミング。
+歌唱合成（`s0.vvm` は同梱できるが合成 API を公開していない）。
+音声モデルの実行時アンロード（`initialize()` のやり直しで代替）。
 Android の Play Asset Delivery（`assetSource: "download"` で代替）。
+
+**ストリーミング合成は voicevox_core 0.17.0 自体に存在しない**（C ヘッダにも Java の `Synthesizer` にも該当 API が無い）。`streaming_talk` はスタイルの種別名で、逐次出力の合成を指すものではない。

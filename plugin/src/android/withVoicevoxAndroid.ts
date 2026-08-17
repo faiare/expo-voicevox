@@ -24,7 +24,11 @@ import {
   ensureAndroidOnnxruntime,
   pruneUnusedAbis,
 } from '../core/setupAndroid';
-import { ensureOpenJtalkDictionary, ensureVoiceModels } from '../core/setupAssets';
+import {
+  ensureOpenJtalkDictionary,
+  ensureVoiceModelLicenses,
+  ensureVoiceModels,
+} from '../core/setupAssets';
 import { packageRoot } from '../packageRoot';
 import { buildRuntimeManifest, serializeManifest } from '../runtimeManifest';
 import type { ResolvedVoicevoxProps } from '../types';
@@ -67,14 +71,19 @@ export const withVoicevoxAndroid: ConfigPlugin<ResolvedVoicevoxProps> = (config,
       await ensureAndroidOnnxruntime(context);
       pruneUnusedAbis(packageRoot, props.android.abis, log);
 
+      const assetContext = {
+        versions: props.versions,
+        cache,
+        skipIntegrityCheck: props.skipIntegrityCheck,
+        log,
+      };
+
       const entries: PlacementEntry[] = [];
+      // 利用規約は download モードでも同梱する（数 KB しかなく、クレジット表記の根拠になる）。
+      if (props.voiceModels.length > 0) {
+        entries.push(...(await ensureVoiceModelLicenses(assetContext)));
+      }
       if (props.assetSource === 'bundle') {
-        const assetContext = {
-          versions: props.versions,
-          cache,
-          skipIntegrityCheck: props.skipIntegrityCheck,
-          log,
-        };
         entries.push(...(await ensureVoiceModels(assetContext, props.voiceModels)));
         if (props.openJtalkDictionary) {
           entries.push(await ensureOpenJtalkDictionary(assetContext));

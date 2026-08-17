@@ -41,7 +41,12 @@ data class VoicevoxWord(
 )
 
 class VoicevoxEngine {
-  private var synthesizer: Synthesizer? = null
+  /**
+   * `isInitialized` は JS スレッドから engineLock を取らずに読まれるので `@Volatile` にする。
+   *
+   * 書き込みは常に engineLock の中で起きるが、それだけでは読み側への可視性が保証されない。
+   */
+  @Volatile private var synthesizer: Synthesizer? = null
 
   /**
    * ユーザー辞書を後から適用するために保持する OpenJTalk。
