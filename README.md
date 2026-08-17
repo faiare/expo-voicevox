@@ -1,4 +1,4 @@
-# expo-voicevox
+# @faiare/expo-voicevox
 
 [VOICEVOX CORE](https://github.com/VOICEVOX/voicevox_core) を組み込んで、Expo アプリから日本語音声合成を行うネイティブモジュール。
 
@@ -14,7 +14,7 @@
 ## セットアップ
 
 ```bash
-npx expo install expo-voicevox
+npx expo install @faiare/expo-voicevox
 ```
 
 `app.json` に config plugin を追加して、使いたい声を書く。
@@ -23,7 +23,7 @@ npx expo install expo-voicevox
 {
   "expo": {
     "plugins": [
-      ["expo-voicevox", { "voices": ["zundamon/normal"] }]
+      ["@faiare/expo-voicevox", { "voices": ["zundamon/normal"] }]
     ]
   }
 }
@@ -47,7 +47,7 @@ npx expo run:ios     # または npx expo run:android
 指定は **`<キャラクター>/<スタイル>`** の形で、どちらも半角英数の slug を使う。
 
 ```jsonc
-["expo-voicevox", {
+["@faiare/expo-voicevox", {
   "voices": [
     "zundamon/normal",
     "zundamon/sasayaki",
@@ -97,7 +97,7 @@ VVM のファイル名で直接指定することもできる（`{ "file": "n0.v
 | `cacheDirectory` | `$XDG_CACHE_HOME/expo-voicevox` | ダウンロードキャッシュの場所。プロジェクトルートからの相対パスも可 |
 | `skipIntegrityCheck` | `false` | sha256 検証をスキップする（社内ミラー用） |
 
-型定義は `import type { ExpoVoicevoxPluginProps } from 'expo-voicevox/plugin/build/types'` で参照できる。
+型定義は `import type { ExpoVoicevoxPluginProps } from '@faiare/expo-voicevox/plugin/build/types'` で参照できる。
 
 ### bundle と download の使い分け
 
@@ -124,7 +124,7 @@ EAS Build のコンテナはビルドごとにまっさらなので、そのま�
 ## 使い方
 
 ```ts
-import * as Voicevox from 'expo-voicevox';
+import * as Voicevox from '@faiare/expo-voicevox';
 
 // ネイティブライブラリのロード確認を兼ねる
 Voicevox.getVersion(); // "0.17.0"
@@ -196,7 +196,7 @@ npm run ios              # または npm run android
 
 「initialize()」→「合成して再生」の 2 タップで音が鳴る。
 
-example の `app.json` は plugin を `"../app.plugin.js"` という相対パスで参照している。`nativeModulesDir: ".."` は autolinking 専用の設定で Node のモジュール解決には効かず、example から `expo-voicevox` を resolve できないため。利用者のアプリでは `"expo-voicevox"` と書く。
+example の `app.json` は plugin を `"../app.plugin.js"` という相対パスで参照している。`nativeModulesDir: ".."` は autolinking 専用の設定で Node のモジュール解決には効かず、example から `@faiare/expo-voicevox` を resolve できないため。利用者のアプリでは `"@faiare/expo-voicevox"` と書く。
 
 ## 開発
 
@@ -225,7 +225,7 @@ example は plugin を相対パスで参照しているため、利用者と同�
 npm pack --dry-run --json --ignore-scripts   # ネイティブバイナリが混ざっていないこと
 npm pack
 # 別ディレクトリで新規 Expo アプリを作り、上の .tgz を入れて
-# app.json に "expo-voicevox" 形式で plugin を追加し、npx expo prebuild が通ること
+# app.json に "@faiare/expo-voicevox" 形式で plugin を追加し、npx expo prebuild が通ること
 ```
 
 ## プラットフォームごとの事情
@@ -250,7 +250,7 @@ npm pack
 
 ## ライセンス・クレジット
 
-- `expo-voicevox` 本体: MIT
+- `@faiare/expo-voicevox` 本体: MIT
 - voicevox_core: MIT
 - VOICEVOX 音声モデル (VVM) / VOICEVOX ONNX Runtime: 独自の利用規約。**VOICEVOX を利用したことがわかるクレジット表記が必要**
 - OpenJTalk 辞書: BSD-3-Clause。著作権表示の再掲が必要

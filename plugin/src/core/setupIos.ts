@@ -15,7 +15,7 @@ import { copyTree, ensureDir, exists, findEntry, rmrf, unzip } from './fsUtils';
 import type { VoicevoxVersions } from '../types';
 
 export type SetupContext = {
-  /** `expo-voicevox` パッケージのルート。 */
+  /** `@faiare/expo-voicevox` パッケージのルート。 */
   packageRoot: string;
   versions: VoicevoxVersions;
   cache: VoicevoxCache;

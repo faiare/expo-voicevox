@@ -1,5 +1,5 @@
 {
-  "name": "expo-voicevox",
+  "name": "@faiare/expo-voicevox",
   "version": "0.1.0",
   "description": "A project to call voicevox-core from an Expo app.",
   "main": "build/index.js",
@@ -40,6 +40,9 @@
     "expo-voicevox",
     "ExpoVoicevox"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": "https://github.com/faiare/expo-voicevox",
   "bugs": {
     "url": "https://github.com/faiare/expo-voicevox/issues"

@@ -3,8 +3,8 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "expo-voicevox": ["../src/index"],
-      "expo-voicevox/*": ["../src/*"]
+      "@faiare/expo-voicevox": ["../src/index"],
+      "@faiare/expo-voicevox/*": ["../src/*"]
     }
   }
 }

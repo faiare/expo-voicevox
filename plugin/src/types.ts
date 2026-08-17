@@ -2,7 +2,7 @@
  * `app.json` の plugin config で受け取る型。
  *
  * `src/ExpoVoicevox.types.ts` から re-export しているので、`app.config.ts` 派は
- * `import type { ExpoVoicevoxPluginProps } from 'expo-voicevox'` で型付きで書ける。
+ * `import type { ExpoVoicevoxPluginProps } from '@faiare/expo-voicevox'` で型付きで書ける。
  */
 
 /** voicevox-core が公式に配布している Android の ABI。他は配布されていない。 */

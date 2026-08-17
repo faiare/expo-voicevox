@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクトの目的
 
-`create-expo-module` で生成した直後の状態から、**voicevox-core を組み込んで Expo アプリに音声合成機能を提供する** ネイティブモジュール（npm パッケージ `expo-voicevox`）を作る。
+`create-expo-module` で生成した直後の状態から、**voicevox-core を組み込んで Expo アプリに音声合成機能を提供する** ネイティブモジュール（npm パッケージ `@faiare/expo-voicevox`）を作る。
 
 - 対象プラットフォームは **iOS / Android のみ**。`expo-module.config.json` の `platforms` も `["apple", "android"]` のみ。
 - `src/ExpoVoicevoxModule.web.ts` はテンプレート由来の web スタブ。web はサポート対象外なので、API 追加時に web 実装を作り込む必要はない（バンドラの解決を壊さないためにファイル自体は残す）。
@@ -51,7 +51,7 @@ npm start          # Metro のみ
 
 ```bash
 # Kotlin: コンパイル + JVM ユニットテスト（VoicevoxArchive の tar.gz 展開）
-cd example/android && ./gradlew :expo-voicevox:testDebugUnitTest --console=plain
+cd example/android && ./gradlew :faiare-expo-voicevox:testDebugUnitTest --console=plain
 # 結果は android/build/test-results/testDebugUnitTest/TEST-*.xml
 
 # Swift: シミュレータ向けビルド（podspec が新ファイルを拾っているかも分かる）
@@ -109,7 +109,8 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
 - **`package.json` の `files` を指定すると `.npmignore` は完全に無視される**（npm-packlist はこの許可リストだけを見る）。`ios` / `android` をディレクトリごと書くと、plugin が prebuild 時に取得する `ios/Frameworks` `android/libs` `android/src/main/jniLibs` や Gradle の `android/build` まで tarball に入り 100MB を超える。必要なパスだけを列挙すること。変更したら必ず `npm pack --dry-run --json --ignore-scripts` で中身を確認する（正常値: 50 ファイル前後 / 40KB 前後）。
 - **`plugin/tsconfig.json` の `tsBuildInfoFile` は `./build/` の中を指すこと**。既定では `plugin/tsconfig.tsbuildinfo` に出るため、`internal/module_scripts/prepare.js` が `plugin/build` を消しても `tsc --build` が「最新」と判断して何も出力せず、**publish 時に `plugin/build` が空になる**。
 - **`plugin/jest.config.js` は `transform` を上書きしている**。`jest-expo/node` プリセット（`getNodePreset()`）は babel-jest のオプションを `caller` だけで置き換えるため、素の jest-expo プリセットが入れている `babel-preset-expo` が落ちて TypeScript を解釈できなくなる。
-- **config plugin から `resolveFrom(projectRoot, 'expo-voicevox')` は使えない**。`example/package.json` の `nativeModulesDir: ".."` は autolinking 専用でモジュール解決には効かず、example から `expo-voicevox` は resolve できない。パッケージルートは `__dirname` 基準で求めること。同じ理由で `example/app.json` の plugin 指定は `"../app.plugin.js"` という相対パス形式になる（利用者向けの README には `"expo-voicevox"` 形式を書く）。
+- **config plugin から `resolveFrom(projectRoot, '@faiare/expo-voicevox')` は使えない**。`example/package.json` の `nativeModulesDir: ".."` は autolinking 専用でモジュール解決には効かず、example から `@faiare/expo-voicevox` は resolve できない。パッケージルートは `__dirname` 基準で求めること。同じ理由で `example/app.json` の plugin 指定は `"../app.plugin.js"` という相対パス形式になる（利用者向けの README には `"@faiare/expo-voicevox"` 形式を書く）。
+- **パッケージ名がスコープ付きなので Gradle のプロジェクト名は `faiare-expo-voicevox`**（autolinking の `convertPackageToProjectName` が `@` を落として `/` をハイフンにする）。iOS の pod 名は podspec 由来なので `ExpoVoicevox` のまま。ログ接頭辞・キャッシュディレクトリ名（`~/.cache/expo-voicevox`）・Android の展開先（`noBackupFilesDir/expo-voicevox`）はパス/表示文字列なのでスコープを付けていない。
 
 ### バージョン注意
 

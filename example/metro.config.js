@@ -20,10 +20,10 @@ config.resolver.nodeModulesPaths = [
 ];
 
 config.resolver.extraNodeModules = {
-  'expo-voicevox': '..',
+  '@faiare/expo-voicevox': '..',
 };
 
-// 音声モデルと OpenJTalk 辞書は expo-voicevox の config plugin が prebuild で
+// 音声モデルと OpenJTalk 辞書は @faiare/expo-voicevox の config plugin が prebuild で
 // ネイティブプロジェクトへ直接配置するので、Metro のアセットとしては扱わない。
 
 config.watchFolders = [path.resolve(__dirname, '..')];

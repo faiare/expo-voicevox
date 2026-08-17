@@ -1,5 +1,5 @@
 import { setAudioModeAsync, useAudioPlayer } from 'expo-audio';
-import * as Voicevox from 'expo-voicevox';
+import * as Voicevox from '@faiare/expo-voicevox';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
