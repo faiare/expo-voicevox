@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同じブランチで走っている古いジョブは止める。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  js:
+    name: lint / test (JS)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            example/package-lock.json
+
+      # npm ci は prepare（internal/module_scripts/prepare.js）を走らせるので、
+      # この時点で build/ と plugin/build/ の tsc が通ることまで検証される。
+      # Actions は CI=true を入れているため、build.js / test.js が --watch を足すことはない。
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm test
+
+      - run: npm test plugin
+
+      - name: Install example dependencies
+        run: npm ci
+        working-directory: example
+
+      # example は TypeScript のバージョンがモジュール本体と食い違っている（~6.0.3 と ^5.9.2）ので、
+      # 公開 API の型が example から見て壊れていないかを別に確かめる。
+      - name: Type-check the example app
+        run: npx tsc --noEmit
+        working-directory: example
+
+  android:
+    name: unit tests (Android)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            example/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # config plugin が取ってくる voicevox-core / ONNX Runtime / OpenJTalk 辞書 / VVM は
+      # 合わせて 130MB 超になる。~/.cache/expo-voicevox に貯まるので、バージョン定義と
+      # app.json の voices が変わらない限り使い回す。
+      - name: Cache voicevox-core artifacts
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/expo-voicevox
+          key: >-
+            voicevox-${{ runner.os }}-${{ hashFiles('plugin/src/core/versions.ts',
+            'plugin/src/core/artifacts.generated.ts', 'example/app.json') }}
+
+      # prebuild が app.plugin.js 経由で plugin/build/withVoicevox を require するため、
+      # ここでも npm ci（= prepare で plugin/build を生成）を先に済ませる。
+      - run: npm ci
+
+      - name: Install example dependencies
+        run: npm ci
+        working-directory: example
+
+      # example/android は生成物なのでリポジトリに無い。prebuild で作り、
+      # 同時に config plugin が jar を android/libs、.so を android/src/main/jniLibs へ置く。
+      # --no-install は直前の npm ci をやり直させないため。
+      - name: Prebuild the example app (Android)
+        run: npx expo prebuild --platform android --no-install
+        working-directory: example
+
+      # VoicevoxArchive の tar.gz 展開は java.io と java.util.zip だけで書かれているので、
+      # エミュレータを起動せず JVM のユニットテストで検証できる。
+      - name: Run JVM unit tests
+        run: ./gradlew :faiare-expo-voicevox:testDebugUnitTest --console=plain
+        working-directory: example/android
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-results
+          path: android/build/test-results/testDebugUnitTest/
+          if-no-files-found: ignore

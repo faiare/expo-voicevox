@@ -69,6 +69,19 @@ find example/ios/build/Build/Products/*/*.app/voicevox -maxdepth 1
 
 `src/` を変更したら **`npm run build` を先に実行**すること。`package.json` の `main` は `build/index.js` で、example は build 出力を解決する。
 
+### CI
+
+`.github/workflows/ci.yml` が push（main）と PR で 2 ジョブ回す。どちらも ubuntu-latest で、iOS は macOS runner の実行時間が見合わないので入れていない（`xcodebuild` は手元で通す）。
+
+- **js**: `npm ci` → `npm run lint` → `npm test` → `npm test plugin` → example で `npm ci` と `tsc --noEmit`。
+- **android**: 上に加えて `npx expo prebuild --platform android --no-install` → `./gradlew :faiare-expo-voicevox:testDebugUnitTest`。
+
+CI 特有の前提が 3 つある。
+
+- **`npm ci` はルートの `package-lock.json` が `package.json` と同期していないと即失敗する**。ローカルの `npm install` は黙って動き続けるので気付けない。依存を触ったら lock も一緒にコミットすること。
+- **`npm ci` は `prepare`（`internal/module_scripts/prepare.js`）を走らせる**ので、build/ と plugin/build/ の tsc はこの時点で通っている必要がある。逆に言えば prebuild が `app.plugin.js` から require する `plugin/build/withVoicevox` もこれで用意される。
+- **`example/android` は生成物なのでリポジトリに無い**。Gradle を回すには prebuild が要り、そこで config plugin が 130MB 超を取得する。`~/.cache/expo-voicevox` を `actions/cache` で使い回しており、キーは `plugin/src/core/versions.ts` / `plugin/src/core/artifacts.generated.ts` / `example/app.json` のハッシュ。バージョンや `voices` を変えると当然取り直しになる。
+
 ## アーキテクチャ
 
 ### 3層構造と名前の一致
