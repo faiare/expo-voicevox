@@ -106,7 +106,7 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
 
 #### エージェント向けの落とし穴
 
-- **`package.json` の `files` を指定すると `.npmignore` は完全に無視される**（npm-packlist はこの許可リストだけを見る）。`ios` / `android` をディレクトリごと書くと、plugin が prebuild 時に取得する `ios/Frameworks` `android/libs` `android/src/main/jniLibs` や Gradle の `android/build` まで tarball に入り 100MB を超える。必要なパスだけを列挙すること。変更したら必ず `npm pack --dry-run --json --ignore-scripts` で中身を確認する（正常値: 50 ファイル前後 / 40KB 前後）。
+- **`package.json` の `files` を指定すると `.npmignore` は完全に無視される**（npm-packlist はこの許可リストだけを見る）。`ios` / `android` をディレクトリごと書くと、plugin が prebuild 時に取得する `ios/Frameworks` `android/libs` `android/src/main/jniLibs` や Gradle の `android/build` まで tarball に入り 100MB を超える。必要なパスだけを列挙すること。変更したら必ず `npm pack --dry-run --json --ignore-scripts` で中身を確認する（正常値: 90 ファイル前後 / 80KB 前後。最大のファイルは `plugin/build/vvm/catalog.generated.js` の約 36KB）。ネイティブバイナリが 1 つでも混ざれば MB 単位になるので、桁で判断できる。
 - **`plugin/tsconfig.json` の `tsBuildInfoFile` は `./build/` の中を指すこと**。既定では `plugin/tsconfig.tsbuildinfo` に出るため、`internal/module_scripts/prepare.js` が `plugin/build` を消しても `tsc --build` が「最新」と判断して何も出力せず、**publish 時に `plugin/build` が空になる**。
 - **`plugin/jest.config.js` は `transform` を上書きしている**。`jest-expo/node` プリセット（`getNodePreset()`）は babel-jest のオプションを `caller` だけで置き換えるため、素の jest-expo プリセットが入れている `babel-preset-expo` が落ちて TypeScript を解釈できなくなる。
 - **config plugin から `resolveFrom(projectRoot, '@faiare/expo-voicevox')` は使えない**。`example/package.json` の `nativeModulesDir: ".."` は autolinking 専用でモジュール解決には効かず、example から `@faiare/expo-voicevox` は resolve できない。パッケージルートは `__dirname` 基準で求めること。同じ理由で `example/app.json` の plugin 指定は `"../app.plugin.js"` という相対パス形式になる（利用者向けの README には `"@faiare/expo-voicevox"` 形式を書く）。
