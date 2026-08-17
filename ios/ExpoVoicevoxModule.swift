@@ -14,6 +14,24 @@ struct VoicevoxInitializeOptions: Record {
   var cpuNumThreads: Int = 0
 }
 
+/// ユーザー辞書へ登録する単語。既定値は JS 側で埋まっている。
+struct VoicevoxUserDictWordRecord: Record {
+  @Field
+  var surface: String = ""
+
+  @Field
+  var pronunciation: String = ""
+
+  @Field
+  var accentType: Int = 0
+
+  @Field
+  var wordType: String = "COMMON_NOUN"
+
+  @Field
+  var priority: Int = 5
+}
+
 /// voicevox-core 由来のエラーを JS へ伝えるための例外。
 final class VoicevoxException: GenericException<String> {
   override var reason: String {
@@ -33,7 +51,8 @@ public class ExpoVoicevoxModule: Module {
     Events("onPrepareProgress")
 
     OnDestroy {
-      self.engine.releaseSynthesizer()
+      // 合成の実行中に破棄されうるので、直列キューの上で解放する。
+      self.engineQueue.sync { self.engine.release() }
     }
 
     Function("getVersion") { () -> String in
@@ -186,10 +205,46 @@ public class ExpoVoicevoxModule: Module {
     }
     .runOnQueue(engineQueue)
 
-    AsyncFunction("finalize") {
-      self.engine.releaseSynthesizer()
+    AsyncFunction("setUserDictWords") { (words: [VoicevoxUserDictWordRecord]) in
+      let converted = try words.map { try self.toUserDictWord($0) }
+      try self.wrappingErrors { try self.engine.setUserDictWords(converted) }
     }
     .runOnQueue(engineQueue)
+
+    AsyncFunction("loadUserDictFile") { (path: String) in
+      try self.wrappingErrors { try self.engine.loadUserDictFile(path: path) }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("saveUserDictFile") { (path: String) in
+      try self.wrappingErrors { try self.engine.saveUserDictFile(path: path) }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("finalize") {
+      self.engine.release()
+    }
+    .runOnQueue(engineQueue)
+  }
+
+  private func toUserDictWord(_ record: VoicevoxUserDictWordRecord) throws -> UserDictWord {
+    // C の enum 定数は voicevox_core を import している VoicevoxEngine.swift 側で引く。
+    guard let wordType = UserDictWord.wordType(named: record.wordType) else {
+      throw VoicevoxException("unknown user dictionary word type: \(record.wordType)")
+    }
+    guard let accentType = UInt(exactly: record.accentType) else {
+      throw VoicevoxException("accentType is out of range: \(record.accentType)")
+    }
+    guard let priority = UInt8(exactly: record.priority) else {
+      throw VoicevoxException("priority is out of range: \(record.priority)")
+    }
+    return UserDictWord(
+      surface: record.surface,
+      pronunciation: record.pronunciation,
+      accentType: accentType,
+      wordType: wordType,
+      priority: priority
+    )
   }
 
   private func checkedStyleId(_ styleId: Int) throws -> UInt32 {

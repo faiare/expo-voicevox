@@ -54,6 +54,15 @@ class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   async audioQueryFromAccentPhrasesJson(): Promise<never> {
     throw new Error(UNSUPPORTED);
   }
+  async setUserDictWords(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async loadUserDictFile(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async saveUserDictFile(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
   async finalize(): Promise<void> {
     // 何も確保していないので何もしない。
   }

@@ -128,6 +128,33 @@ export type VoicevoxAudioQuery = {
   kana: string | null;
 };
 
+/** ユーザー辞書の単語の品詞。 */
+export type VoicevoxUserDictWordType =
+  'PROPER_NOUN' | 'COMMON_NOUN' | 'VERB' | 'ADJECTIVE' | 'SUFFIX';
+
+/** ユーザー辞書に登録する単語。 */
+export type VoicevoxUserDictWord = {
+  /** 表記。ネイティブ側で全角に正規化される。 */
+  surface: string;
+  /** 読み。全角カタカナで書く。 */
+  pronunciation: string;
+  /** アクセント核の位置（0 以上）。既定は 0。 */
+  accentType?: number;
+  /** 品詞。既定は `COMMON_NOUN`。 */
+  wordType?: VoicevoxUserDictWordType;
+  /** 0〜10。大きいほど優先される。既定は 5。 */
+  priority?: number;
+};
+
+/** ネイティブへ渡す形。既定値は JS 側で埋めてしまい、両 OS の既定値に依存しない。 */
+export type NormalizedVoicevoxUserDictWord = {
+  surface: string;
+  pronunciation: string;
+  accentType: number;
+  wordType: VoicevoxUserDictWordType;
+  priority: number;
+};
+
 /** `tts()` / `synthesis()` / `ttsFromKana()` の合成オプション。 */
 export type VoicevoxSynthesisOptions = {
   /**

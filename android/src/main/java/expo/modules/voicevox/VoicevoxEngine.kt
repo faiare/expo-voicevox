@@ -6,9 +6,11 @@ import jp.hiroshiba.voicevoxcore.AccentPhrase
 import jp.hiroshiba.voicevoxcore.AccelerationMode
 import jp.hiroshiba.voicevoxcore.AudioQuery
 import jp.hiroshiba.voicevoxcore.CharacterMeta
+import jp.hiroshiba.voicevoxcore.UserDictWord
 import jp.hiroshiba.voicevoxcore.blocking.Onnxruntime
 import jp.hiroshiba.voicevoxcore.blocking.OpenJtalk
 import jp.hiroshiba.voicevoxcore.blocking.Synthesizer
+import jp.hiroshiba.voicevoxcore.blocking.UserDict
 import jp.hiroshiba.voicevoxcore.blocking.VoiceModelFile
 import org.json.JSONArray
 import org.json.JSONObject
@@ -29,8 +31,28 @@ private val ACCENT_PHRASE_LIST_TYPE = object : TypeToken<List<AccentPhrase>>() {
  *
  * このクラス自体はスレッドセーフではない。呼び出し側で直列化すること。
  */
+/** ユーザー辞書へ登録する単語。既定値は JS 側で埋まっている。 */
+data class VoicevoxWord(
+  val surface: String,
+  val pronunciation: String,
+  val accentType: Int,
+  val wordType: UserDictWord.Type,
+  val priority: Int
+)
+
 class VoicevoxEngine {
   private var synthesizer: Synthesizer? = null
+
+  /**
+   * ユーザー辞書を後から適用するために保持する OpenJTalk。
+   *
+   * `Synthesizer.getOpenJtalk()` でも取れるが、Synthesizer を破棄したあとも
+   * 辞書を差し替えられるように、iOS 側と対称な形で自分で持つ。
+   */
+  private var openJtalk: OpenJtalk? = null
+
+  /** ユーザー辞書。`release()` では手放さず、再 `initialize()` をまたいで残す。 */
+  private var userDict: UserDict? = null
 
   /**
    * AudioQuery と JS の橋渡しに使う Gson。
@@ -49,11 +71,13 @@ class VoicevoxEngine {
     get() = synthesizer != null
 
   fun initialize(openJtalkDictDir: String, voiceModelPaths: List<String>, cpuNumThreads: Int) {
-    // 再初期化に備えて、既存の Synthesizer は先に手放す。
-    releaseSynthesizer()
+    // 再初期化に備えて、既存の Synthesizer と OpenJTalk は先に手放す。
+    release()
 
     val onnxruntime = Onnxruntime.loadOnce().perform()
     val openJtalk = OpenJtalk(openJtalkDictDir)
+    // 既に設定されているユーザー辞書があれば、Synthesizer を作る前に適用しておく。
+    userDict?.let { openJtalk.useUserDict(it) }
     val synthesizer =
       Synthesizer.builder(onnxruntime, openJtalk)
         // モバイル向けビルドに GPU は無いので CPU を明示する。
@@ -72,6 +96,7 @@ class VoicevoxEngine {
       synthesizer.loadVoiceModel(model).perform()
     }
 
+    this.openJtalk = openJtalk
     this.synthesizer = synthesizer
   }
 
@@ -156,13 +181,55 @@ class VoicevoxEngine {
       .perform()
   }
 
-  fun releaseSynthesizer() {
-    // Java API は明示的な close を持たない（finalize で解放される）ため参照だけ落とす。
+  /**
+   * ユーザー辞書の単語を差し替え、OpenJTalk へ適用し直す。
+   *
+   * 辞書は作り直す。voicevox-core は単語の削除に UUID を要求するが、その UUID は
+   * 辞書を作り直すたびに振り直されるので JS へ渡す意味が無く、全置換の方が扱いが単純になる。
+   */
+  fun setUserDictWords(words: List<VoicevoxWord>) {
+    val newDict = UserDict()
+    for (word in words) {
+      newDict.addWord(
+        UserDictWord(word.surface, word.pronunciation, word.accentType)
+          .wordType(word.wordType)
+          .priority(word.priority)
+      )
+    }
+    // 適用に失敗したら差し替えないので、旧辞書がそのまま生き続ける。
+    openJtalk?.useUserDict(newDict)
+    userDict = newDict
+  }
+
+  /** 辞書ファイルを現在の辞書へ読み込み、適用し直す。 */
+  fun loadUserDictFile(path: String) {
+    val dict = requireUserDict()
+    dict.load(path)
+    openJtalk?.useUserDict(dict)
+  }
+
+  /** 現在の辞書をファイルへ保存する。 */
+  fun saveUserDictFile(path: String) {
+    requireUserDict().save(path)
+  }
+
+  /**
+   * Synthesizer と OpenJTalk を手放す。ユーザー辞書は次の `initialize()` のために残す。
+   *
+   * Java API には明示的な close が無い。`rsDrop()` をリフレクションで叩くと、GC 時の
+   * `finalize()` が二度目の `rsDrop()` を呼んで `VoiceModelFile.close()` と同じ
+   * 「Null pointer in rust value from Java」で落ちる（0.17.0 で確認）。
+   * そのため参照を落として GC に委ねるしかなく、解放のタイミングは保証されない。
+   */
+  fun release() {
     synthesizer = null
+    openJtalk = null
   }
 
   private fun requireSynthesizer(): Synthesizer =
     synthesizer ?: throw VoicevoxNotInitializedException()
+
+  private fun requireUserDict(): UserDict = userDict ?: UserDict().also { userDict = it }
 
   private fun parseAccentPhrases(json: String): List<AccentPhrase> =
     gson.fromJson<List<AccentPhrase>>(json, ACCENT_PHRASE_LIST_TYPE)

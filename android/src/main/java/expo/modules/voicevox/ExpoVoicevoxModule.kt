@@ -8,6 +8,7 @@ import expo.modules.kotlin.records.Record
 import java.io.File
 import java.util.UUID
 import jp.hiroshiba.voicevoxcore.GlobalInfo
+import jp.hiroshiba.voicevoxcore.UserDictWord
 
 /**
  * `initialize()` に渡される JS 側のオプション。
@@ -20,6 +21,19 @@ class VoicevoxInitializeOptions : Record {
   @Field val voiceModelPaths: List<String>? = null
 
   @Field val cpuNumThreads: Int = 0
+}
+
+/** ユーザー辞書へ登録する単語。既定値は JS 側で埋まっている。 */
+class VoicevoxUserDictWordRecord : Record {
+  @Field val surface: String = ""
+
+  @Field val pronunciation: String = ""
+
+  @Field val accentType: Int = 0
+
+  @Field val wordType: String = "COMMON_NOUN"
+
+  @Field val priority: Int = 5
 }
 
 /** voicevox-core 由来のエラーを JS へ伝えるための例外。 */
@@ -39,7 +53,7 @@ class ExpoVoicevoxModule : Module() {
 
     Events("onPrepareProgress")
 
-    OnDestroy { synchronized(engineLock) { engine.releaseSynthesizer() } }
+    OnDestroy { synchronized(engineLock) { engine.release() } }
 
     Function("getVersion") { GlobalInfo.getVersion() }
 
@@ -178,7 +192,49 @@ class ExpoVoicevoxModule : Module() {
       }
     }
 
-    AsyncFunction("finalize") { synchronized(engineLock) { engine.releaseSynthesizer() } }
+    AsyncFunction("setUserDictWords") { words: List<VoicevoxUserDictWordRecord> ->
+      val converted = words.map { toVoicevoxWord(it) }
+      synchronized(engineLock) {
+        runWrappingErrors("failed to update the user dictionary") {
+          engine.setUserDictWords(converted)
+        }
+      }
+    }
+
+    AsyncFunction("loadUserDictFile") { path: String ->
+      synchronized(engineLock) {
+        runWrappingErrors("failed to load the user dictionary") { engine.loadUserDictFile(path) }
+      }
+    }
+
+    AsyncFunction("saveUserDictFile") { path: String ->
+      synchronized(engineLock) {
+        runWrappingErrors("failed to save the user dictionary") { engine.saveUserDictFile(path) }
+      }
+    }
+
+    AsyncFunction("finalize") { synchronized(engineLock) { engine.release() } }
+  }
+
+  private fun toVoicevoxWord(record: VoicevoxUserDictWordRecord): VoicevoxWord {
+    // UserDictWord.Type は enum ではないので when で引く。
+    val wordType =
+      when (record.wordType) {
+        "PROPER_NOUN" -> UserDictWord.Type.PROPER_NOUN
+        "COMMON_NOUN" -> UserDictWord.Type.COMMON_NOUN
+        "VERB" -> UserDictWord.Type.VERB
+        "ADJECTIVE" -> UserDictWord.Type.ADJECTIVE
+        "SUFFIX" -> UserDictWord.Type.SUFFIX
+        else ->
+          throw VoicevoxException("unknown user dictionary word type: ${record.wordType}")
+      }
+    return VoicevoxWord(
+      surface = record.surface,
+      pronunciation = record.pronunciation,
+      accentType = record.accentType,
+      wordType = wordType,
+      priority = record.priority
+    )
   }
 
   /** config plugin が配置したアセットを使える状態にする。進捗は JS へイベントで流す。 */

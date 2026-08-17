@@ -11,10 +11,13 @@ import {
   getVersion,
   initialize,
   isInitialized,
+  loadUserDictFile,
   prepareAssets,
   replaceMoraData,
   replaceMoraPitch,
   replacePhonemeLength,
+  saveUserDictFile,
+  setUserDictWords,
   synthesis,
   tts,
   ttsFromKana,
@@ -39,6 +42,9 @@ jest.mock('../ExpoVoicevoxModule', () => ({
     replacePhonemeLengthJson: jest.fn(),
     replaceMoraPitchJson: jest.fn(),
     audioQueryFromAccentPhrasesJson: jest.fn(),
+    setUserDictWords: jest.fn(),
+    loadUserDictFile: jest.fn(),
+    saveUserDictFile: jest.fn(),
     finalize: jest.fn(),
     addListener: jest.fn(),
   },
@@ -402,6 +408,117 @@ describe('アクセント句の編集', () => {
   it('壊れたアクセント句はネイティブへ流さずに throw する', async () => {
     await expect(replaceMoraData([{ accent: 1 } as never], 3)).rejects.toThrow('accentPhrases[0]');
     expect(nativeModule.replaceMoraDataJson).not.toHaveBeenCalled();
+  });
+});
+
+describe('setUserDictWords', () => {
+  it('省略された項目を既定値で埋めてネイティブへ渡す', async () => {
+    nativeModule.setUserDictWords.mockResolvedValue(undefined);
+
+    await setUserDictWords([{ surface: '猫', pronunciation: 'ネコ' }]);
+
+    expect(nativeModule.setUserDictWords).toHaveBeenCalledWith([
+      {
+        surface: '猫',
+        pronunciation: 'ネコ',
+        accentType: 0,
+        wordType: 'COMMON_NOUN',
+        priority: 5,
+      },
+    ]);
+  });
+
+  it('指定された値はそのまま渡す', async () => {
+    nativeModule.setUserDictWords.mockResolvedValue(undefined);
+
+    await setUserDictWords([
+      {
+        surface: '四国めたん',
+        pronunciation: 'シコクメタン',
+        accentType: 4,
+        wordType: 'PROPER_NOUN',
+        priority: 8,
+      },
+    ]);
+
+    expect(nativeModule.setUserDictWords).toHaveBeenCalledWith([
+      {
+        surface: '四国めたん',
+        pronunciation: 'シコクメタン',
+        accentType: 4,
+        wordType: 'PROPER_NOUN',
+        priority: 8,
+      },
+    ]);
+  });
+
+  it('空配列で辞書を空にできる', async () => {
+    nativeModule.setUserDictWords.mockResolvedValue(undefined);
+
+    await setUserDictWords([]);
+
+    expect(nativeModule.setUserDictWords).toHaveBeenCalledWith([]);
+  });
+
+  it('surface が空ならネイティブを呼ばずに throw する', () => {
+    expect(() => setUserDictWords([{ surface: '', pronunciation: 'ネコ' }])).toThrow(
+      'words[0].surface'
+    );
+    expect(nativeModule.setUserDictWords).not.toHaveBeenCalled();
+  });
+
+  it('未知の wordType は throw する', () => {
+    expect(() =>
+      setUserDictWords([{ surface: '猫', pronunciation: 'ネコ', wordType: 'NOUN' as never }])
+    ).toThrow('words[0].wordType');
+    expect(nativeModule.setUserDictWords).not.toHaveBeenCalled();
+  });
+
+  it.each([-1, 11, 1.5])('priority が %p なら throw する', (priority) => {
+    expect(() => setUserDictWords([{ surface: '猫', pronunciation: 'ネコ', priority }])).toThrow(
+      'words[0].priority'
+    );
+    expect(nativeModule.setUserDictWords).not.toHaveBeenCalled();
+  });
+
+  it('accentType が負なら throw する', () => {
+    expect(() =>
+      setUserDictWords([{ surface: '猫', pronunciation: 'ネコ', accentType: -1 }])
+    ).toThrow('words[0].accentType');
+  });
+
+  it('2 件目の不正でもどの要素か分かる', () => {
+    expect(() =>
+      setUserDictWords([
+        { surface: '猫', pronunciation: 'ネコ' },
+        { surface: '犬', pronunciation: '' },
+      ])
+    ).toThrow('words[1].pronunciation');
+  });
+});
+
+describe('ユーザー辞書のファイル入出力', () => {
+  it('loadUserDictFile はパスをそのまま渡す', async () => {
+    nativeModule.loadUserDictFile.mockResolvedValue(undefined);
+
+    await loadUserDictFile('/tmp/dict.json');
+
+    expect(nativeModule.loadUserDictFile).toHaveBeenCalledWith('/tmp/dict.json');
+  });
+
+  it('saveUserDictFile はパスをそのまま渡す', async () => {
+    nativeModule.saveUserDictFile.mockResolvedValue(undefined);
+
+    await saveUserDictFile('/tmp/dict.json');
+
+    expect(nativeModule.saveUserDictFile).toHaveBeenCalledWith('/tmp/dict.json');
+  });
+
+  it('パスが空ならネイティブを呼ばずに throw する', () => {
+    expect(() => loadUserDictFile('')).toThrow('path');
+    expect(() => saveUserDictFile('')).toThrow('path');
+    expect(nativeModule.loadUserDictFile).not.toHaveBeenCalled();
+    expect(nativeModule.saveUserDictFile).not.toHaveBeenCalled();
   });
 });
 

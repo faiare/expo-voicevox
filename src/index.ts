@@ -3,6 +3,7 @@
 import type { EventSubscription } from 'expo-modules-core';
 
 import type {
+  NormalizedVoicevoxUserDictWord,
   VoicevoxAccentPhrase,
   VoicevoxAssetPaths,
   VoicevoxAudioQuery,
@@ -10,6 +11,8 @@ import type {
   VoicevoxInitializeOptions,
   VoicevoxPrepareProgress,
   VoicevoxSynthesisOptions,
+  VoicevoxUserDictWord,
+  VoicevoxUserDictWordType,
 } from './ExpoVoicevox.types';
 import ExpoVoicevoxModule from './ExpoVoicevoxModule';
 import {
@@ -300,6 +303,92 @@ export function synthesis(
     styleId,
     resolveInterrogativeUpspeak(options)
   );
+}
+
+const USER_DICT_WORD_TYPES: VoicevoxUserDictWordType[] = [
+  'PROPER_NOUN',
+  'COMMON_NOUN',
+  'VERB',
+  'ADJECTIVE',
+  'SUFFIX',
+];
+
+const MAX_USER_DICT_PRIORITY = 10;
+
+function normalizeUserDictWord(
+  word: VoicevoxUserDictWord,
+  index: number
+): NormalizedVoicevoxUserDictWord {
+  const at = `words[${index}]`;
+  assertNonEmptyString(word?.surface, `${at}.surface`);
+  assertNonEmptyString(word?.pronunciation, `${at}.pronunciation`);
+
+  const accentType = word.accentType ?? 0;
+  if (!Number.isInteger(accentType) || accentType < 0) {
+    throw new Error(`expo-voicevox: ${at}.accentType must be a non-negative integer`);
+  }
+
+  const wordType = word.wordType ?? 'COMMON_NOUN';
+  if (!USER_DICT_WORD_TYPES.includes(wordType)) {
+    throw new Error(
+      `expo-voicevox: ${at}.wordType must be one of ${USER_DICT_WORD_TYPES.join(' / ')}`
+    );
+  }
+
+  const priority = word.priority ?? 5;
+  if (!Number.isInteger(priority) || priority < 0 || priority > MAX_USER_DICT_PRIORITY) {
+    throw new Error(
+      `expo-voicevox: ${at}.priority must be an integer between 0 and ${MAX_USER_DICT_PRIORITY}`
+    );
+  }
+
+  return {
+    surface: word.surface,
+    pronunciation: word.pronunciation,
+    accentType,
+    wordType,
+    priority,
+  };
+}
+
+/**
+ * ユーザー辞書の単語を差し替える。空配列を渡すと辞書を空にする。
+ *
+ * 固有名詞など、既定の辞書では読みを誤る語をここで登録する。
+ *
+ * 呼ぶたびに辞書を作り直して OpenJTalk へ適用し直す。voicevox-core は
+ * 「辞書を変更したら再適用が必要」という仕様なので、追加・削除を個別に扱う API ではなく
+ * 全置換にして、再適用の呼び忘れが起きない形にしている。
+ * 呼び出し側は自分の単語リストを唯一の状態として持ち、変更のたびにこれを呼べばよい。
+ *
+ * `initialize()` の前でも呼べる。設定した辞書は `finalize()` をまたいで残るので、
+ * 再初期化しても登録し直す必要はない。
+ *
+ * 登録済みの単語を読み出す API は用意していない。voicevox-core が返す形が
+ * iOS（MeCab 形式で品詞から `wordType` を逆引きする）と Android（5 フィールドのみ）で
+ * 食い違っており、揃えた値を返せないため。
+ */
+export function setUserDictWords(words: VoicevoxUserDictWord[]): Promise<void> {
+  if (!Array.isArray(words)) {
+    throw new Error('expo-voicevox: words must be an array');
+  }
+  return ExpoVoicevoxModule.setUserDictWords(words.map(normalizeUserDictWord));
+}
+
+/**
+ * VOICEVOX 形式の辞書ファイルを読み込み、現在の辞書へ**追加**して適用し直す。
+ *
+ * 置き換えではないので、まっさらな状態から読みたいときは先に `setUserDictWords([])` を呼ぶ。
+ */
+export function loadUserDictFile(path: string): Promise<void> {
+  assertNonEmptyString(path, 'path');
+  return ExpoVoicevoxModule.loadUserDictFile(path);
+}
+
+/** 現在のユーザー辞書を VOICEVOX 形式でファイルへ保存する。 */
+export function saveUserDictFile(path: string): Promise<void> {
+  assertNonEmptyString(path, 'path');
+  return ExpoVoicevoxModule.saveUserDictFile(path);
 }
 
 /** Synthesizer を破棄してメモリを解放する。再度使うには `initialize()` が必要。 */

@@ -16,6 +16,28 @@ struct VoicevoxCoreError: LocalizedError {
   }
 }
 
+/// ユーザー辞書へ登録する単語。JS 側で既定値を埋めてから渡ってくる。
+struct UserDictWord {
+  let surface: String
+  let pronunciation: String
+  let accentType: UInt
+  /// `VoicevoxUserDictWordType`。結果コードと同じく型名が曖昧になるので Int32 で持つ。
+  let wordType: Int32
+  let priority: UInt8
+
+  /// JS から来る品詞名を C の enum 値へ変換する。未知の名前なら nil。
+  static func wordType(named name: String) -> Int32? {
+    switch name {
+    case "PROPER_NOUN": return Int32(VOICEVOX_USER_DICT_WORD_TYPE_PROPER_NOUN.rawValue)
+    case "COMMON_NOUN": return Int32(VOICEVOX_USER_DICT_WORD_TYPE_COMMON_NOUN.rawValue)
+    case "VERB": return Int32(VOICEVOX_USER_DICT_WORD_TYPE_VERB.rawValue)
+    case "ADJECTIVE": return Int32(VOICEVOX_USER_DICT_WORD_TYPE_ADJECTIVE.rawValue)
+    case "SUFFIX": return Int32(VOICEVOX_USER_DICT_WORD_TYPE_SUFFIX.rawValue)
+    default: return nil
+    }
+  }
+}
+
 /// `initialize()` より前に合成を要求されたときのエラー。
 struct VoicevoxNotInitializedError: LocalizedError {
   var errorDescription: String? {
@@ -36,12 +58,26 @@ final class VoicevoxEngine {
   private var onnxruntime: OpaquePointer?
   private var synthesizer: OpaquePointer?
 
+  /// ユーザー辞書を後から適用するために保持する OpenJTalk。
+  ///
+  /// `OpenJtalkRc` は参照カウント方式で、`voicevox_synthesizer_new` に渡すとカウンタが増える。
+  /// そのため Synthesizer 生成後に手放しても安全だが、`voicevox_open_jtalk_rc_use_user_dict` は
+  /// このハンドルを必要とするので保持しておく。
+  private var openJtalk: OpaquePointer?
+
+  /// ユーザー辞書。`release()` では解放せず、再 `initialize()` をまたいで残す。
+  private var userDict: OpaquePointer?
+
   var isInitialized: Bool {
     synthesizer != nil
   }
 
   deinit {
-    releaseSynthesizer()
+    release()
+    if let userDict {
+      voicevox_user_dict_delete(userDict)
+    }
+    userDict = nil
   }
 
   /// voicevox-core のバージョン。ライブラリのロード確認を兼ねる。
@@ -53,8 +89,8 @@ final class VoicevoxEngine {
   }
 
   func initialize(openJtalkDictDir: String, voiceModelPaths: [String], cpuNumThreads: UInt16) throws {
-    // 再初期化に備えて、既存の Synthesizer は先に破棄する。
-    releaseSynthesizer()
+    // 再初期化に備えて、既存の Synthesizer と OpenJTalk は先に破棄する。
+    release()
 
     var onnxruntime: OpaquePointer?
     try check(voicevox_onnxruntime_init_once(&onnxruntime))
@@ -67,8 +103,6 @@ final class VoicevoxEngine {
     guard let openJtalk else {
       throw VoicevoxCoreError(code: 0, message: "failed to load the OpenJTalk dictionary")
     }
-    // Synthesizer が内部で参照を保持するため、生成後は解放してよい。
-    defer { voicevox_open_jtalk_rc_delete(openJtalk) }
 
     var options = voicevox_make_default_initialize_options()
     // モバイル向けビルドに GPU は無いので CPU を明示する。
@@ -76,22 +110,31 @@ final class VoicevoxEngine {
     options.cpu_num_threads = cpuNumThreads
 
     var synthesizer: OpaquePointer?
-    try check(voicevox_synthesizer_new(onnxruntime, openJtalk, options, &synthesizer))
-    guard let synthesizer else {
-      throw VoicevoxCoreError(code: 0, message: "failed to create the synthesizer")
-    }
-
     do {
+      // 既に設定されているユーザー辞書があれば、Synthesizer を作る前に適用しておく。
+      if let userDict {
+        try check(voicevox_open_jtalk_rc_use_user_dict(openJtalk, userDict))
+      }
+
+      try check(voicevox_synthesizer_new(onnxruntime, openJtalk, options, &synthesizer))
+      guard let synthesizer else {
+        throw VoicevoxCoreError(code: 0, message: "failed to create the synthesizer")
+      }
+
       for path in voiceModelPaths {
         try loadVoiceModel(into: synthesizer, path: path)
       }
     } catch {
-      // 途中で失敗したら中途半端な Synthesizer を残さない。
-      voicevox_synthesizer_delete(synthesizer)
+      // 途中で失敗したら中途半端な状態を残さない。
+      if let synthesizer {
+        voicevox_synthesizer_delete(synthesizer)
+      }
+      voicevox_open_jtalk_rc_delete(openJtalk)
       throw error
     }
 
     self.onnxruntime = onnxruntime
+    self.openJtalk = openJtalk
     self.synthesizer = synthesizer
   }
 
@@ -220,16 +263,89 @@ final class VoicevoxEngine {
     }
   }
 
-  func releaseSynthesizer() {
+  /// ユーザー辞書の単語を差し替え、OpenJTalk へ適用し直す。
+  ///
+  /// 辞書は作り直す。voicevox-core は単語の削除に UUID を要求するが、その UUID は
+  /// 辞書を作り直すたびに振り直されるので JS へ渡す意味が無く、全置換の方が扱いが単純になる。
+  func setUserDictWords(_ words: [UserDictWord]) throws {
+    guard let newDict = voicevox_user_dict_new() else {
+      throw VoicevoxCoreError(code: 0, message: "failed to create the user dictionary")
+    }
+
+    do {
+      for word in words {
+        try addWord(word, to: newDict)
+      }
+      // 適用に失敗したら差し替えないので、旧辞書がそのまま生き続ける。
+      try applyUserDict(newDict)
+    } catch {
+      voicevox_user_dict_delete(newDict)
+      throw error
+    }
+
+    // 適用が終わってから旧辞書を捨てる。破棄済みの辞書に触るとプロセスごと落ちる。
+    if let userDict {
+      voicevox_user_dict_delete(userDict)
+    }
+    userDict = newDict
+  }
+
+  /// 辞書ファイルを現在の辞書へ読み込み、適用し直す。
+  func loadUserDictFile(path: String) throws {
+    let dict = try requireUserDict()
+    try check(voicevox_user_dict_load(dict, path))
+    try applyUserDict(dict)
+  }
+
+  /// 現在の辞書をファイルへ保存する。
+  func saveUserDictFile(path: String) throws {
+    try check(voicevox_user_dict_save(try requireUserDict(), path))
+  }
+
+  /// Synthesizer と OpenJTalk を破棄する。ユーザー辞書は次の `initialize()` のために残す。
+  func release() {
     if let synthesizer {
       voicevox_synthesizer_delete(synthesizer)
     }
     synthesizer = nil
+    if let openJtalk {
+      voicevox_open_jtalk_rc_delete(openJtalk)
+    }
+    openJtalk = nil
     // onnxruntime は init_once で得た共有参照であり、解放する API が無いので参照だけ落とす。
     onnxruntime = nil
   }
 
   // MARK: - Private
+
+  private func requireUserDict() throws -> OpaquePointer {
+    if let userDict {
+      return userDict
+    }
+    guard let created = voicevox_user_dict_new() else {
+      throw VoicevoxCoreError(code: 0, message: "failed to create the user dictionary")
+    }
+    userDict = created
+    return created
+  }
+
+  private func addWord(_ word: UserDictWord, to dict: OpaquePointer) throws {
+    var native = voicevox_user_dict_word_make(word.surface, word.pronunciation, word.accentType)
+    native.word_type = word.wordType
+    native.priority = word.priority
+    // UUID は辞書を作り直すたびに変わるので受け取らずに捨てる。
+    var uuid = (UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0),
+                UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0), UInt8(0))
+    try check(voicevox_user_dict_add_word(dict, &native, &uuid))
+  }
+
+  /// OpenJTalk がまだ無ければ何もしない。`initialize()` の中で改めて適用される。
+  private func applyUserDict(_ dict: OpaquePointer) throws {
+    guard let openJtalk else {
+      return
+    }
+    try check(voicevox_open_jtalk_rc_use_user_dict(openJtalk, dict))
+  }
 
   private func requireSynthesizer() throws -> OpaquePointer {
     guard let synthesizer else {

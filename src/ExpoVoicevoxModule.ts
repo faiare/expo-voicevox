@@ -3,6 +3,7 @@ import { NativeModule, requireNativeModule } from 'expo';
 import type {
   ExpoVoicevoxModuleEvents,
   NormalizedVoicevoxInitializeOptions,
+  NormalizedVoicevoxUserDictWord,
   VoicevoxAssetPaths,
 } from './ExpoVoicevox.types';
 
@@ -57,6 +58,12 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
     styleId: number,
     enableInterrogativeUpspeak: boolean
   ): Promise<string>;
+  /** ユーザー辞書を作り直して OpenJTalk へ適用する。 */
+  setUserDictWords(words: NormalizedVoicevoxUserDictWord[]): Promise<void>;
+  /** VOICEVOX 形式の辞書ファイルを現在の辞書へ読み込み、適用し直す。 */
+  loadUserDictFile(path: string): Promise<void>;
+  /** 現在の辞書を VOICEVOX 形式で保存する。 */
+  saveUserDictFile(path: string): Promise<void>;
   /** Synthesizer を破棄する。再度使うには `initialize()` が必要。 */
   finalize(): Promise<void>;
 }
