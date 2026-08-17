@@ -1,0 +1,42 @@
+name: Comment Changesets PR Status
+
+# PR に changeset があるかどうかを PR コメントで知らせる（マージはブロックしない）。
+# changeset が要らない変更（テストや CI だけ）もあるので、CI を落とす形にはしていない。
+
+on:
+  pull_request_target:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # pull_request_target は書き込み権限を持つので、fork の PR でコードを実行してはいけない。
+  # このジョブは PR の内容を読むだけで、fork のコードは走らせない。
+  pr-status:
+    name: Generate status
+    # version PR には changeset が無いのが当たり前なので黙らせる。
+    if: ${{ !startsWith(github.head_ref, 'changeset-release/') }}
+    runs-on: ubuntu-slim
+    permissions:
+      contents: read
+    outputs:
+      comment-body: ${{ steps.pr-status.outputs.comment-body }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: pr-status
+        uses: changesets/action/pr-status@v2
+
+  pr-comment:
+    name: Comment on PR
+    needs: pr-status
+    runs-on: ubuntu-slim
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: changesets/action/pr-comment@v2
+        with:
+          body: ${{ needs.pr-status.outputs.comment-body }}

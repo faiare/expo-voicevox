@@ -1,0 +1,140 @@
+name: Publish
+
+# npm の Trusted Publisher（OIDC）は「リポジトリ + ワークフローファイル名」で照合する。
+# npm 側の設定が publish.yml を指しているので、実際に publish するジョブは必ずこのファイルに置くこと。
+# ファイル名を変えると認証が通らなくなる。
+
+on:
+  push:
+    branches: [main]
+  # 取りこぼした publish を手で流し直せるようにしておく。
+  workflow_dispatch:
+
+# 既定を空にして、ジョブごとに必要な権限だけを明示する。
+permissions: {}
+
+# 同じブランチの多重実行は避ける。publish は途中で止めたくないので cancel-in-progress は付けない。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  # .changeset/*.md が残っているか（= version PR を作る）、無いか（= publish する）を判定する。
+  select-mode:
+    name: Select mode
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.select-mode.outputs.mode }}
+      publish-plan-artifact-id: ${{ steps.select-mode.outputs.publish-plan-artifact-id }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      # changesets を読むだけなので tsc（prepare）は要らない。
+      - run: npm ci --ignore-scripts
+
+      - id: select-mode
+        uses: changesets/action/select-mode@v2
+
+  # changeset があるとき: package.json / CHANGELOG.md / package-lock.json を更新した PR を作る・更新する。
+  version:
+    name: Version packages
+    if: needs.select-mode.outputs.mode == 'version'
+    needs: select-mode
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - run: npm ci --ignore-scripts
+
+      - uses: changesets/action/version@v2
+        env:
+          # @changesets/changelog-github が CHANGELOG に PR/コミットのリンクを入れるために読む。
+          # changesets/action 自体の認証はこの環境変数ではなく github-token 入力で決まる（既定のままでよい）。
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          # changeset version は package-lock.json を触らないため、後段の npm ci が
+          # 「lock と package.json の version が食い違う」で落ちる。release:version で一緒に直す。
+          script: npm run release:version
+          commit-message: 'chore: リリースするバージョンと CHANGELOG を更新する'
+          pr-title: 'リリース: パッケージのバージョンを上げる'
+
+  # changeset が無いとき: 公開対象を tarball に固めて artifact に上げる。
+  pack:
+    name: Pack packages
+    if: needs.select-mode.outputs.mode == 'publish'
+    needs: select-mode
+    runs-on: ubuntu-latest
+    outputs:
+      pack-dir-artifact-id: ${{ steps.pack.outputs.pack-dir-artifact-id }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      # npm ci は prepare を走らせるので、ここで build/ と plugin/build/ の tsc が通ることまで確かめられる。
+      # lock が package.json と食い違っていればこの時点で落ちる。
+      - run: npm ci
+
+      # version PR は GITHUB_TOKEN で作られるため ci.yml が回らない。
+      # npm の公開は取り消せないので、固める前に JS のテストだけは通しておく。
+      - run: npm test
+
+      - run: npm test plugin
+
+      - id: pack
+        uses: changesets/action/pack@v2
+        with:
+          publish-plan-artifact-id: ${{ needs.select-mode.outputs.publish-plan-artifact-id }}
+
+  # tarball を npm に publish し、git tag と GitHub Release を作る。
+  # OIDC のトークンを受け取るのはこのジョブだけに絞る。
+  publish:
+    name: Publish to npm
+    needs: pack
+    # workflow_dispatch は任意のブランチから流せてしまう。そのブランチの package.json が
+    # 未公開バージョンだと、そのブランチのコードがそのまま npm に出る。main 以外は publish させない。
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      # tarball は pack 済みなので、ここで再ビルドする必要はない。
+      - run: npm ci --ignore-scripts
+
+      - uses: changesets/action/publish@v2
+        with:
+          pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
