@@ -5,6 +5,7 @@ import type {
   NormalizedVoicevoxInitializeOptions,
   NormalizedVoicevoxUserDictWord,
   VoicevoxAssetPaths,
+  VoicevoxUtterance,
 } from './ExpoVoicevox.types';
 
 declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
@@ -28,9 +29,19 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
    */
   getMetasJson(): Promise<string>;
   /** テキストを合成し、書き出した WAV ファイルの絶対パスを返す。 */
-  tts(text: string, styleId: number, enableInterrogativeUpspeak: boolean): Promise<string>;
+  tts(
+    text: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean,
+    directory: string
+  ): Promise<string>;
   /** AquesTalk 風記法のカナを合成し、書き出した WAV ファイルの絶対パスを返す。 */
-  ttsFromKana(kana: string, styleId: number, enableInterrogativeUpspeak: boolean): Promise<string>;
+  ttsFromKana(
+    kana: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean,
+    directory: string
+  ): Promise<string>;
   /**
    * テキストから AudioQuery を生成し、voicevox-core の JSON 文字列のまま返す。
    *
@@ -56,8 +67,39 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
   synthesis(
     audioQueryJson: string,
     styleId: number,
-    enableInterrogativeUpspeak: boolean
+    enableInterrogativeUpspeak: boolean,
+    directory: string
   ): Promise<string>;
+  /**
+   * テキストを合成し、WAV をファイルにせずそのまま再生する。
+   *
+   * 再生を始めた（または追い越されて始めなかった）時点で解決する。再生の完了は待たず、
+   * `onSpeechStateChange` で通知する。
+   */
+  speak(
+    text: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean,
+    audioSession: string
+  ): Promise<VoicevoxUtterance>;
+  /** AquesTalk 風記法のカナを合成し、そのまま再生する。 */
+  speakFromKana(
+    kana: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean,
+    audioSession: string
+  ): Promise<VoicevoxUtterance>;
+  /** AudioQuery の JSON を合成し、そのまま再生する。 */
+  speakFromAudioQuery(
+    audioQueryJson: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean,
+    audioSession: string
+  ): Promise<VoicevoxUtterance>;
+  /** 再生中の発話を止める。合成中の発話も鳴らさずに終わらせる。 */
+  stopSpeaking(): Promise<void>;
+  /** 音が鳴っているか。合成中はまだ false。 */
+  isSpeaking(): boolean;
   /** ユーザー辞書を作り直して OpenJTalk へ適用する。 */
   setUserDictWords(words: NormalizedVoicevoxUserDictWord[]): Promise<void>;
   /** VOICEVOX 形式の辞書ファイルを現在の辞書へ読み込み、適用し直す。 */

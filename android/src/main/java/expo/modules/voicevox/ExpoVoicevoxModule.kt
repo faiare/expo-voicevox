@@ -1,5 +1,6 @@
 package expo.modules.voicevox
 
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -48,16 +49,33 @@ class ExpoVoicevoxModule : Module() {
   /** config plugin が配置したアセットの解決役。reactContext が要るので遅延生成する。 */
   private var assets: VoicevoxAssets? = null
 
+  /**
+   * 再生役。reactContext が要るので assets と同じく遅延生成する。
+   *
+   * `isSpeaking` が JS スレッドから engineLock を取らずに読むので `@Volatile`。
+   * 生成は [playerInitLock] で守る（engineLock を使うと合成の完了まで待たされる）。
+   */
+  @Volatile private var player: VoicevoxPlayer? = null
+
+  private val playerInitLock = Any()
+
   override fun definition() = ModuleDefinition {
     Name("ExpoVoicevox")
 
-    Events("onPrepareProgress")
+    Events("onPrepareProgress", "onSpeechStateChange")
 
-    OnDestroy { synchronized(engineLock) { engine.release() } }
+    OnDestroy {
+      // 停止は engineLock に依存しないので先に済ませる（合成の実行中でも即座に黙る）。
+      player?.release()
+      synchronized(engineLock) { engine.release() }
+    }
 
     Function("getVersion") { GlobalInfo.getVersion() }
 
     Function("isInitialized") { engine.isInitialized }
+
+    // 再生役がまだ無いなら鳴っているはずがない。ここで作ると reactContext 待ちで例外になる。
+    Function("isSpeaking") { player?.isSpeaking ?: false }
 
     AsyncFunction("prepareAssets") {
       synchronized(engineLock) {
@@ -102,18 +120,29 @@ class ExpoVoicevoxModule : Module() {
       }
     }
 
-    AsyncFunction("tts") { text: String, styleId: Int, enableInterrogativeUpspeak: Boolean ->
+    AsyncFunction("tts") {
+      text: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean,
+      directory: String ->
+      // 書き出し先の検証はロックの外で済ませる。
+      val outputDir = outputDirectory(directory)
       synchronized(engineLock) {
         runWrappingErrors("speech synthesis failed") {
-          writeWavToCache(engine.tts(text, styleId, enableInterrogativeUpspeak))
+          writeWav(engine.tts(text, styleId, enableInterrogativeUpspeak), outputDir)
         }
       }
     }
 
-    AsyncFunction("ttsFromKana") { kana: String, styleId: Int, enableInterrogativeUpspeak: Boolean ->
+    AsyncFunction("ttsFromKana") {
+      kana: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean,
+      directory: String ->
+      val outputDir = outputDirectory(directory)
       synchronized(engineLock) {
         runWrappingErrors("speech synthesis failed") {
-          writeWavToCache(engine.ttsFromKana(kana, styleId, enableInterrogativeUpspeak))
+          writeWav(engine.ttsFromKana(kana, styleId, enableInterrogativeUpspeak), outputDir)
         }
       }
     }
@@ -184,13 +213,49 @@ class ExpoVoicevoxModule : Module() {
     AsyncFunction("synthesis") {
       audioQueryJson: String,
       styleId: Int,
-      enableInterrogativeUpspeak: Boolean ->
+      enableInterrogativeUpspeak: Boolean,
+      directory: String ->
+      val outputDir = outputDirectory(directory)
       synchronized(engineLock) {
         runWrappingErrors("speech synthesis failed") {
-          writeWavToCache(engine.synthesis(audioQueryJson, styleId, enableInterrogativeUpspeak))
+          writeWav(engine.synthesis(audioQueryJson, styleId, enableInterrogativeUpspeak), outputDir)
         }
       }
     }
+
+    AsyncFunction("speak") {
+      text: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean,
+      audioSession: String,
+      promise: Promise ->
+      speakWav(audioSession, promise) { engine.tts(text, styleId, enableInterrogativeUpspeak) }
+    }
+
+    AsyncFunction("speakFromKana") {
+      kana: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean,
+      audioSession: String,
+      promise: Promise ->
+      speakWav(audioSession, promise) {
+        engine.ttsFromKana(kana, styleId, enableInterrogativeUpspeak)
+      }
+    }
+
+    AsyncFunction("speakFromAudioQuery") {
+      audioQueryJson: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean,
+      audioSession: String,
+      promise: Promise ->
+      speakWav(audioSession, promise) {
+        engine.synthesis(audioQueryJson, styleId, enableInterrogativeUpspeak)
+      }
+    }
+
+    // 合成の実行中でも即座に止められるよう、engineLock は取らない。
+    AsyncFunction("stopSpeaking") { requirePlayer().stop() }
 
     AsyncFunction("setUserDictWords") { words: List<VoicevoxUserDictWordRecord> ->
       val converted = words.map { toVoicevoxWord(it) }
@@ -263,14 +328,83 @@ class ExpoVoicevoxModule : Module() {
     }
   }
 
-  /** 合成結果をキャッシュディレクトリへ書き出し、そのパスを返す。 */
-  private fun writeWavToCache(wav: ByteArray): String {
-    val cacheDir =
-      appContext.reactContext?.cacheDir
-        ?: throw VoicevoxException("the cache directory is not available")
-    val outputDir = File(cacheDir, "expo-voicevox")
+  /**
+   * 再生役を用意する。reactContext が要るので遅延生成する。
+   *
+   * AsyncFunction は同時に走りうるので、二重生成しないようロックの中で作る。取り逃すと
+   * 誰も参照していない AudioTrack が鳴り続けて止められなくなる。
+   */
+  private fun requirePlayer(): VoicevoxPlayer =
+    synchronized(playerInitLock) {
+      player?.let {
+        return it
+      }
+      val context =
+        appContext.reactContext
+          ?: throw VoicevoxException("the Android context is not available yet")
+      val created = VoicevoxPlayer(context)
+      created.onStateChange = { id, state, reason ->
+        sendEvent(
+          "onSpeechStateChange",
+          mapOf("id" to id, "state" to state.jsValue, "reason" to reason)
+        )
+      }
+      player = created
+      created
+    }
+
+  /**
+   * 再生系に共通する「engineLock の中で合成し、再生はロックの外で始める」流れ。
+   *
+   * 再生の完了をロックの中で待つと、鳴っているあいだ次の合成を始められない。
+   * `VoicevoxPlayer.play` は専用スレッドを起こして即座に戻る。
+   */
+  private fun speakWav(audioSession: String, promise: Promise, synthesize: () -> ByteArray) {
+    try {
+      val mode =
+        VoicevoxAudioSessionMode.parse(audioSession)
+          ?: throw VoicevoxException("unknown audio session mode: $audioSession")
+      val player = requirePlayer()
+      val id = player.begin()
+      val wav =
+        try {
+          synchronized(engineLock) {
+            runWrappingErrors("speech synthesis failed") { synthesize() }
+          }
+        } catch (error: Throwable) {
+          // 合成に失敗したら自分の予約だけ畳む。鳴っている音は止めない。
+          player.cancel(id)
+          throw error
+        }
+      val result = runWrappingErrors("playback failed") { player.play(id, wav, mode) }
+      promise.resolve(result.toResultMap())
+    } catch (error: CodedException) {
+      promise.reject(error)
+    } catch (error: Throwable) {
+      promise.reject(
+        VoicevoxException(error.message ?: error::class.java.simpleName, error)
+      )
+    }
+  }
+
+  /** 書き出し先の指定を実ディレクトリへ変換する。 */
+  private fun outputDirectory(directory: String): File {
+    val context =
+      appContext.reactContext
+        ?: throw VoicevoxException("the Android context is not available yet")
+    return when (directory) {
+      "cache" -> context.cacheDir
+      // filesDir は Android Auto Backup（上限 25MB）の対象。WAV を貯め込むと上限に当たる。
+      "document" -> context.filesDir
+      else -> throw VoicevoxException("unknown output directory: $directory")
+    }
+  }
+
+  /** 合成結果を指定のディレクトリへ書き出し、そのパスを返す。 */
+  private fun writeWav(wav: ByteArray, baseDir: File): String {
+    val outputDir = File(baseDir, "expo-voicevox")
     if (!outputDir.exists() && !outputDir.mkdirs()) {
-      throw VoicevoxException("could not create the cache directory: ${outputDir.absolutePath}")
+      throw VoicevoxException("could not create the output directory: ${outputDir.absolutePath}")
     }
     val outputFile = File(outputDir, "${UUID.randomUUID()}.wav")
     outputFile.writeBytes(wav)

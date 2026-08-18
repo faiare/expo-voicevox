@@ -61,6 +61,7 @@ export type VoicevoxPrepareProgress = {
 
 export type ExpoVoicevoxModuleEvents = {
   onPrepareProgress: (progress: VoicevoxPrepareProgress) => void;
+  onSpeechStateChange: (change: VoicevoxSpeechStateChange) => void;
 };
 
 /** 音声モデルに含まれるスタイル。`id` が合成時に指定する styleId。 */
@@ -155,6 +156,16 @@ export type NormalizedVoicevoxUserDictWord = {
   priority: number;
 };
 
+/**
+ * WAV の書き出し先。
+ *
+ * `cache` は iOS の `.cachesDirectory` / Android の `cacheDir`。空き容量が逼迫すると
+ * OS に消される代わりに、iCloud にも Android Auto Backup にも入らない。
+ * `document` は iOS の `.documentDirectory` / Android の `filesDir`。消えない代わりに
+ * バックアップの対象になる（Android Auto Backup の上限は 25MB）。
+ */
+export type VoicevoxOutputDirectory = 'cache' | 'document';
+
 /** `tts()` / `synthesis()` / `ttsFromKana()` の合成オプション。 */
 export type VoicevoxSynthesisOptions = {
   /**
@@ -166,4 +177,66 @@ export type VoicevoxSynthesisOptions = {
    * `synthesis()` では、アクセント句の `isInterrogative` が立っている句に対して働く。
    */
   enableInterrogativeUpspeak?: boolean;
+  /**
+   * WAV の書き出し先。既定は `'cache'`。
+   *
+   * ファイルを作らずそのまま鳴らすだけなら `speak()` を使う。
+   */
+  directory?: VoicevoxOutputDirectory;
+};
+
+/**
+ * 再生のあいだだけオーディオセッション（iOS）/ オーディオフォーカス（Android）をどう扱うか。
+ *
+ * 既定の `'none'` は何も触らない。expo-audio などで既にセッションを管理しているアプリと
+ * 競合させないため。`'none'` 以外を選ぶと iOS ではカテゴリが `.playback` になり、
+ * 消音スイッチが入っていても鳴るようになる。
+ *
+ * - `'exclusive'`: 他アプリの音を止める（iOS: `.playback` / Android: `AUDIOFOCUS_GAIN_TRANSIENT`）
+ * - `'duck'`: 他アプリの音を小さくする（iOS: `.duckOthers` / Android: `..._MAY_DUCK`）
+ * - `'mix'`: 重ねて鳴らす（iOS: `.mixWithOthers` / Android はフォーカスを取らないので `'none'` と同じ）
+ *
+ * iOS のカテゴリは再生後に元へ戻さない（`setActive(false)` だけを呼ぶ）。プロセス全体で
+ * 共有される設定なので、戻すと再生中に他のライブラリが変えた設定を踏み潰すため。
+ * 触られたくない場合は `'none'` のままにすること。
+ */
+export type VoicevoxAudioSessionMode = 'none' | 'exclusive' | 'duck' | 'mix';
+
+/** `speak()` / `speakFromKana()` / `speakFromAudioQuery()` のオプション。 */
+export type VoicevoxSpeakOptions = {
+  /** 疑問文の語尾を自動で上げるか。既定は true。`VoicevoxSynthesisOptions` と同じ。 */
+  enableInterrogativeUpspeak?: boolean;
+  /** オーディオセッションの扱い。既定は `'none'`（何も触らない）。 */
+  audioSession?: VoicevoxAudioSessionMode;
+};
+
+/** `speak()` が返す発話。 */
+export type VoicevoxUtterance = {
+  /** 発話 ID。`onSpeechStateChange` の `id` と対応する。 */
+  id: number;
+  /** 再生時間（ミリ秒）。`started` が false なら 0。 */
+  durationMillis: number;
+  /**
+   * 実際に再生を始めたか。
+   *
+   * 合成しているあいだに別の `speak()` や `stopSpeaking()` に追い越されると false になる。
+   * false のとき、この `id` のイベントは 1 件も届かない。
+   */
+  started: boolean;
+};
+
+/** 再生の状態。`'started'` 以外は発話の終わり方を表す。 */
+export type VoicevoxSpeechState = 'started' | 'finished' | 'stopped' | 'failed';
+
+/**
+ * 再生状態の変化。
+ *
+ * `speak()` が `started: true` を返した発話には、`'started'` が 1 回と
+ * `'finished'` / `'stopped'` / `'failed'` のいずれか 1 回が必ず届く。
+ */
+export type VoicevoxSpeechStateChange = {
+  id: number;
+  state: VoicevoxSpeechState;
+  /** `state` が `'failed'` のときの理由。それ以外は空文字。 */
+  reason: string;
 };

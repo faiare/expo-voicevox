@@ -42,15 +42,30 @@ final class VoicevoxException: GenericException<String> {
 public class ExpoVoicevoxModule: Module {
   private let engine = VoicevoxEngine()
 
+  /// 再生役。合成とは別に動くので直列キューには載せない。
+  private let player = VoicevoxPlayer()
+
   /// voicevox-core の Synthesizer は同時実行できないので、重い処理は 1 本の直列キューに載せる。
   private let engineQueue = DispatchQueue(label: "expo.modules.voicevox.engine")
 
   public func definition() -> ModuleDefinition {
     Name("ExpoVoicevox")
 
-    Events("onPrepareProgress")
+    Events("onPrepareProgress", "onSpeechStateChange")
+
+    OnCreate {
+      // モジュールが player を所有するので、コールバック側は弱参照にして循環させない。
+      self.player.onStateChange = { [weak self] id, state, reason in
+        self?.sendEvent(
+          "onSpeechStateChange",
+          ["id": id, "state": state.rawValue, "reason": reason]
+        )
+      }
+    }
 
     OnDestroy {
+      // 停止は engineQueue に依存しないので先に済ませる（合成の実行中でも即座に黙る）。
+      self.player.stop()
       // 合成の実行中に破棄されうるので、直列キューの上で解放する。
       self.engineQueue.sync { self.engine.release() }
     }
@@ -61,6 +76,10 @@ public class ExpoVoicevoxModule: Module {
 
     Function("isInitialized") { () -> Bool in
       self.engine.isInitialized
+    }
+
+    Function("isSpeaking") { () -> Bool in
+      self.player.isSpeaking
     }
 
     AsyncFunction("prepareAssets") { () -> [String: Any] in
@@ -105,8 +124,9 @@ public class ExpoVoicevoxModule: Module {
     }
     .runOnQueue(engineQueue)
 
-    AsyncFunction("tts") { (text: String, styleId: Int, enableInterrogativeUpspeak: Bool) -> String in
-      try self.synthesize(styleId: styleId) { styleId in
+    AsyncFunction("tts") {
+      (text: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String) -> String in
+      try self.synthesize(styleId: styleId, directory: directory) { styleId in
         try self.engine.tts(
           text: text,
           styleId: styleId,
@@ -117,8 +137,8 @@ public class ExpoVoicevoxModule: Module {
     .runOnQueue(engineQueue)
 
     AsyncFunction("ttsFromKana") {
-      (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool) -> String in
-      try self.synthesize(styleId: styleId) { styleId in
+      (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String) -> String in
+      try self.synthesize(styleId: styleId, directory: directory) { styleId in
         try self.engine.ttsFromKana(
           kana: kana,
           styleId: styleId,
@@ -194,8 +214,9 @@ public class ExpoVoicevoxModule: Module {
     }
 
     AsyncFunction("synthesis") {
-      (audioQueryJson: String, styleId: Int, enableInterrogativeUpspeak: Bool) -> String in
-      try self.synthesize(styleId: styleId) { styleId in
+      (audioQueryJson: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String)
+        -> String in
+      try self.synthesize(styleId: styleId, directory: directory) { styleId in
         try self.engine.synthesis(
           audioQueryJson: audioQueryJson,
           styleId: styleId,
@@ -204,6 +225,50 @@ public class ExpoVoicevoxModule: Module {
       }
     }
     .runOnQueue(engineQueue)
+
+    AsyncFunction("speak") {
+      (text: String, styleId: Int, enableInterrogativeUpspeak: Bool, audioSession: String,
+        promise: Promise) in
+      self.speakWav(styleId: styleId, audioSession: audioSession, promise: promise) { styleId in
+        try self.engine.tts(
+          text: text,
+          styleId: styleId,
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+        )
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("speakFromKana") {
+      (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool, audioSession: String,
+        promise: Promise) in
+      self.speakWav(styleId: styleId, audioSession: audioSession, promise: promise) { styleId in
+        try self.engine.ttsFromKana(
+          kana: kana,
+          styleId: styleId,
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+        )
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("speakFromAudioQuery") {
+      (audioQueryJson: String, styleId: Int, enableInterrogativeUpspeak: Bool,
+        audioSession: String, promise: Promise) in
+      self.speakWav(styleId: styleId, audioSession: audioSession, promise: promise) { styleId in
+        try self.engine.synthesis(
+          audioQueryJson: audioQueryJson,
+          styleId: styleId,
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+        )
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    // 合成の実行中でも即座に止められるよう、直列キューには載せない。
+    AsyncFunction("stopSpeaking") {
+      self.player.stop()
+    }
 
     AsyncFunction("setUserDictWords") { (words: [VoicevoxUserDictWordRecord]) in
       let converted = try words.map { try self.toUserDictWord($0) }
@@ -265,10 +330,65 @@ public class ExpoVoicevoxModule: Module {
     }
   }
 
-  /// 合成系に共通する「styleId を検証し、WAV をキャッシュへ書き出してパスを返す」流れ。
-  private func synthesize(styleId: Int, _ body: (UInt32) throws -> Data) throws -> String {
+  /// 合成系に共通する「styleId を検証し、WAV を指定のディレクトリへ書き出してパスを返す」流れ。
+  private func synthesize(
+    styleId: Int,
+    directory: String,
+    _ body: (UInt32) throws -> Data
+  ) throws -> String {
     let styleId = try checkedStyleId(styleId)
-    return try wrappingErrors { try self.writeWavToCache(body(styleId)) }
+    let searchPath = try searchPathDirectory(directory)
+    return try wrappingErrors { try self.writeWav(body(styleId), to: searchPath) }
+  }
+
+  /// 再生系に共通する「engineQueue の上で合成し、再生はその外で始める」流れ。
+  ///
+  /// 再生の完了を engineQueue の中で待つと、鳴っているあいだ次の合成を始められない。
+  /// `player.play` はメインキューへ投げて即座に戻り、Promise はそちらで解決する。
+  private func speakWav(
+    styleId: Int,
+    audioSession: String,
+    promise: Promise,
+    _ body: (UInt32) throws -> Data
+  ) {
+    do {
+      guard let session = VoicevoxAudioSessionMode(rawValue: audioSession) else {
+        throw VoicevoxException("unknown audio session mode: \(audioSession)")
+      }
+      let styleId = try checkedStyleId(styleId)
+      let id = player.begin()
+      let wav: Data
+      do {
+        wav = try wrappingErrors { try body(styleId) }
+      } catch {
+        // 合成に失敗したら自分の予約だけ畳む。鳴っている音は止めない。
+        player.cancel(id: id)
+        throw error
+      }
+      player.play(id: id, wav: wav, session: session) { result in
+        switch result {
+        case .success(let playback):
+          promise.resolve(playback.dictionary)
+        case .failure(let error):
+          promise.reject(error)
+        }
+      }
+    } catch {
+      promise.reject(error)
+    }
+  }
+
+  /// 書き出し先の指定を `FileManager` の検索パスへ変換する。
+  private func searchPathDirectory(_ directory: String) throws -> FileManager.SearchPathDirectory {
+    switch directory {
+    case "cache":
+      return .cachesDirectory
+    // iCloud バックアップの対象。UIFileSharingEnabled 次第で Files アプリにも見える。
+    case "document":
+      return .documentDirectory
+    default:
+      throw VoicevoxException("unknown output directory: \(directory)")
+    }
   }
 
   /// config plugin が配置したアセットを使える状態にする。進捗は JS へイベントで流す。
@@ -282,10 +402,11 @@ public class ExpoVoicevoxModule: Module {
     }
   }
 
-  /// 合成結果をキャッシュディレクトリへ書き出し、そのパスを返す。
-  private func writeWavToCache(_ wav: Data) throws -> String {
-    let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-    let outputDirectory = cacheDirectory.appendingPathComponent("expo-voicevox", isDirectory: true)
+  /// 合成結果を指定のディレクトリへ書き出し、そのパスを返す。
+  private func writeWav(_ wav: Data, to searchPath: FileManager.SearchPathDirectory) throws -> String
+  {
+    let baseDirectory = FileManager.default.urls(for: searchPath, in: .userDomainMask)[0]
+    let outputDirectory = baseDirectory.appendingPathComponent("expo-voicevox", isDirectory: true)
 
     do {
       try FileManager.default.createDirectory(
