@@ -1,5 +1,11 @@
 # @faiare/expo-voicevox
 
+[![npm version](https://img.shields.io/npm/v/@faiare/expo-voicevox?style=flat-square&logo=npm&logoColor=white&label=npm&color=cb3837)](https://www.npmjs.com/package/@faiare/expo-voicevox)
+[![CI](https://img.shields.io/github/actions/workflow/status/faiare/expo-voicevox/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/faiare/expo-voicevox/actions/workflows/ci.yml)
+[![Expo SDK 57](https://img.shields.io/badge/Expo%20SDK-57-000020?style=flat-square&logo=expo&logoColor=white)](https://docs.expo.dev/versions/v57.0.0/)
+[![platforms iOS and Android](https://img.shields.io/badge/platforms-iOS%20%7C%20Android-4c8eda?style=flat-square)](#requirements)
+[![License MIT](https://img.shields.io/npm/l/@faiare/expo-voicevox?style=flat-square&color=blue)](./LICENSE)
+
 Japanese text-to-speech for Expo apps, powered by [VOICEVOX CORE](https://github.com/VOICEVOX/voicevox_core).
 
 iOS and Android only. Web is not supported.
