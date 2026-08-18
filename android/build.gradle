@@ -38,7 +38,7 @@ dependencies {
   implementation("jakarta.validation:jakarta.validation-api:3.0.2")
   implementation("jakarta.annotation:jakarta.annotation-api:2.1.1")
 
-  // VoicevoxArchive は java.io と java.util.zip だけで書かれているので、
+  // VoicevoxArchive / VoicevoxWav は java.io と java.util.zip だけで書かれているので、
   // 端末を用意せず JVM のユニットテストで検証できる（./gradlew :faiare-expo-voicevox:testDebugUnitTest）。
   testImplementation("junit:junit:4.13.2")
 }

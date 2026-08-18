@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 対象プラットフォームは **iOS / Android のみ**。`expo-module.config.json` の `platforms` も `["apple", "android"]` のみ。
 - `src/ExpoVoicevoxModule.web.ts` はテンプレート由来の web スタブ。web はサポート対象外なので、API 追加時に web 実装を作り込む必要はない（バンドラの解決を壊さないためにファイル自体は残す）。
 - 音声合成 API は実装済み。基本（`getVersion` / `isInitialized` / `prepareAssets` / `initialize` / `getCharacters` / `tts` / `finalize`）に加え、AudioQuery 一式（`createAudioQuery` / `createAudioQueryFromKana` / `synthesis` / `ttsFromKana`）、アクセント句編集（`createAccentPhrases` 系 / `replaceMoraData` / `replacePhonemeLength` / `replaceMoraPitch` / `audioQueryFromAccentPhrases`）、ユーザー辞書（`setUserDictWords` / `loadUserDictFile` / `saveUserDictFile`）が揃っている。アセットの取得と配置は `plugin/` の config plugin が担う。
+- メモリ上の WAV をそのまま鳴らす `speak` 系（`speak` / `speakFromKana` / `speakFromAudioQuery` / `stopSpeaking` / `isSpeaking` / `waitForSpeech`）もある。再生制御は停止までで、pause / resume / volume と文分割の逐次再生は入れていない（1 発話 = 1 合成 = 1 再生）。
 - **未対応**は歌唱合成（SING）とモデルの実行時アンロードのみ。ストリーミング合成は voicevox_core 0.17.0 自体に API が無い（C ヘッダに `stream` の出現が 0 件）ので「未対応」ではなく「上流に無い」。
 
 ## コマンド
@@ -132,6 +133,37 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
 - **Android**: `android/build.gradle` は `expo-module-gradle-plugin` 前提の最小構成。ネイティブ共有ライブラリは `android/src/main/jniLibs/<abi>/` に置く。voicevox-core が配布しているのは **`arm64-v8a` と `x86_64` のみ**で、ABI の絞り込みは gradle.properties の `reactNativeArchitectures` で行う（`expo-build-properties` の `buildArchs` と同じ経路）。
 - **モデル・辞書ファイル**: voicevox-core は VVM モデルと OpenJTalk 辞書を実行時にファイルパスで読む（Java API も `VoiceModelFile(String)` / `OpenJtalk(String)` のみで FD 版が無い）。iOS はフォルダ参照でバンドルに載せて `.app` 内をそのまま読むので展開不要、**Android は APK 内 assets に実パスが無いので `noBackupFilesDir` への展開が必須**。`filesDir` を使うと 173MB が Android Auto Backup（上限 25MB）の対象になって壊れるので使わない。
 - **同期/非同期**: 合成処理は重い。`Function` ではなく `AsyncFunction`（iOS/Android 共通）で公開し、JS スレッドをブロックしないこと。同期で公開しているのは `getVersion` と `isInitialized` だけで、`isInitialized` は直列キュー / ロックの外から読まれるため iOS は `NSLock` で守った Bool、Android は `@Volatile` にしてある。**`engineQueue.sync` で借りてはいけない**（数秒かかる合成の完了まで JS スレッドが止まる）。
+
+### 再生（speak 系）の勘所
+
+- **再生の完了を `engineQueue` / `engineLock` の中で待ってはいけない**。待つと鳴っているあいだ
+  まるごと次の合成がブロックされる。合成だけを直列化し、再生は別（iOS はメインキュー、Android は
+  発話ごとの専用スレッド）で始めて即座に戻す。`stopSpeaking` / `isSpeaking` にも直列化を掛けない
+  （掛けると合成の実行中に止められない）。
+- **iOS: `AVAudioPlayer` を専用の `DispatchQueue` で生成してはいけない**。delegate は「生成した
+  スレッドの run loop」に配送されるので、run loop の無い GCD キューで作ると
+  `audioPlayerDidFinishPlaying` が永久に呼ばれず再生完了を検知できない。生成・`play()`・`stop()` は
+  すべて `DispatchQueue.main` の上で行う。
+- **iOS: 割り込み（着信など）では delegate が呼ばれない**。`AVAudioSession.interruptionNotification`
+  を購読して自分で状態を畳む。`stop()` でも delegate は来ないので同様。
+- **Android: WAV ヘッダを 44 バイト決め打ちにしない**。`synthesis()` は `outputSamplingRate` /
+  `outputStereo` を反映するのでサンプルレートもチャンネル数も変わるうえ、RIFF は `fmt ` と `data` の
+  あいだに他のチャンクを挟める。`VoicevoxWav` は `java.io` だけで書いてあるので JVM ユニットテストで
+  検証する（`VoicevoxArchive` と同じポリシー）。
+- **Android: MODE_STREAM の `stop()` は drain**（書き込み済みを鳴らし切る）。完了は
+  `playbackHeadPosition >= frameCount` のポーリングで判定する。`setNotificationMarkerPosition` は
+  Looper 付き Handler が要り `flush()` でリセットされるので使わない。停止は `pause()` + `flush()`。
+- **Android: `AudioTrack` は書き込んでいる専用スレッドが解放する**。書き込み中の track を別スレッドから
+  `release()` すると落ちるので、停止側はロックの中で参照を切って `pause()` + `flush()` までにとどめる。
+- **`isSpeaking` は `isInitialized` と同じ扱い**。JS スレッドから同期で呼ばれるので、iOS は `NSLock` で
+  守った Bool、Android は `@Volatile`。`DispatchQueue.main.sync` やロックの `sync` で借りない。
+- **状態変化の通知はロックの外で行う**。JS のリスナーが同期的に `speak()` を呼び返すとデッドロックする。
+  ロックの中では「何を通知するか」だけ決め、呼ぶのは出てから。
+- `audioSession` はプロセス共有の設定を触る。既定 `'none'` では触らず、触ったら**戻さない**
+  （戻すと再生中に他ライブラリが変えた設定を踏み潰す）。
+- 発話の追い越しは**発話 ID の世代管理**で判定する。`speak` の入口で採番して予約し、再生の直前に
+  予約がまだ最新かを見る。前の発話を止めるのは「新しい音が鳴り出す瞬間」であって `speak` が
+  呼ばれた瞬間ではない（合成に失敗したときに前の音を止め損にしないため）。
 
 ### AudioQuery のブリッジ（重要）
 

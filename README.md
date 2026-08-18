@@ -160,7 +160,90 @@ await Voicevox.finalize();
 ```
 
 WAV files are written to the cache directory instead of being passed over the bridge as Base64.
-Delete them when you no longer need them.
+Delete them when you no longer need them — or use `speak()` below, which writes no file at all.
+
+### Playing without writing a file
+
+`speak()`, `speakFromKana()` and `speakFromAudioQuery()` synthesize and play the audio natively.
+No file is created and no playback library is needed.
+
+```ts
+const subscription = Voicevox.addSpeechStateChangeListener(({ id, state }) => {
+  console.log(id, state); // 'started' -> 'finished' | 'stopped' | 'failed'
+});
+
+const { id, durationMillis, started } = await Voicevox.speak('こんにちは', 3);
+
+Voicevox.isSpeaking(); // true
+
+// Wait for it to finish, if you want to
+const ended = await Voicevox.waitForSpeech(id); // 'finished' | 'stopped' | 'failed'
+
+await Voicevox.stopSpeaking();
+subscription.remove();
+```
+
+**`speak()` resolves when playback *starts*, not when it ends.** It rejects only if synthesis
+fails. Use `waitForSpeech(id)` to await the end — it never rejects, it returns how the utterance
+ended.
+
+**Calling `speak()` while something is playing replaces it.** The previous utterance is stopped at
+the moment the new one *starts playing*, not when `speak()` is called — so a failed synthesis never
+leaves you with silence, and there is no gap while the new audio is being synthesized. To go silent
+immediately, `await Voicevox.stopSpeaking()` first. An utterance that gets overtaken while it is
+still being synthesized resolves with `started: false` and never emits any event.
+
+Every utterance that resolves with `started: true` emits exactly one `'started'` event followed by
+exactly one `'finished'`, `'stopped'` or `'failed'`.
+
+By default the library does not touch the audio session, so on iOS the silent switch mutes playback
+unless your app already configured one (for example with expo-audio's
+`setAudioModeAsync({ playsInSilentMode: true })`). Pass `audioSession` to let the library handle it:
+
+| `audioSession` | iOS | Android |
+|---|---|---|
+| `'none'` (default) | Left untouched | No focus request |
+| `'exclusive'` | `.playback`, other audio stops | `AUDIOFOCUS_GAIN_TRANSIENT` |
+| `'duck'` | `.playback` + `.duckOthers` | `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` |
+| `'mix'` | `.playback` + `.mixWithOthers` | No focus request (same as `'none'`) |
+
+```ts
+await Voicevox.speak('こんにちは', 3, { audioSession: 'exclusive' });
+```
+
+Anything other than `'none'` sets the iOS category to `.playback`, which plays through the silent
+switch. **The category is not restored afterwards** (only `setActive(false)` is called): it is
+process-wide state, and restoring it would clobber whatever another library changed during
+playback. Keep `'none'` if something else owns the audio session.
+
+There is no pause, resume or volume control — only `stopSpeaking()`. One `speak()` is one synthesis
+and one playback; long text is not split into sentences and streamed.
+
+### Where WAV files are written
+
+`tts()`, `ttsFromKana()` and `synthesis()` write a file and return its absolute path. Pick the
+directory with `directory`:
+
+```ts
+const cached = await Voicevox.tts('こんにちは', 3); // default: 'cache'
+const kept = await Voicevox.tts('こんにちは', 3, { directory: 'document' });
+```
+
+| `directory` | iOS | Android | Backed up | Reclaimed by the OS |
+|---|---|---|---|---|
+| `'cache'` (default) | `.cachesDirectory` | `cacheDir` | No | Yes, when storage runs low |
+| `'document'` | `.documentDirectory` | `filesDir` | Yes | No |
+
+- **Android**: `filesDir` is covered by Android Auto Backup, which has a **25 MB limit**. Piling up
+  WAV files there will break the app's backup. Use `'cache'` for throwaway audio, or delete the
+  files yourself — the library never removes them.
+- **iOS**: `.documentDirectory` is included in iCloud backups, and if your `Info.plist` sets
+  `UIFileSharingEnabled`, the files are visible to the user in the Files app.
+- There is no `noBackupFilesDir` option. iOS has no one-to-one equivalent (it would be
+  `.documentDirectory` plus an exclude-from-backup flag, i.e. two axes instead of one), and
+  "must not be backed up but must not be deleted either" is not a real need for a few hundred
+  kilobytes of audio — `'cache'` already covers it.
+- If you only want to hear the audio, use `speak()` and no file is created.
 
 ### Adjusting speed and pitch
 
@@ -260,11 +343,18 @@ dictionary.
 | `addPrepareProgressListener(cb)` | sync | Subscribes to asset preparation progress |
 | `initialize(options?)` | async | Sets up ONNX Runtime, OpenJTalk and the synthesizer, and loads the voice models |
 | `getCharacters()` | async | Characters and styles in the loaded models |
-| `tts(text, styleId, options?)` | async | Synthesizes text, returns the WAV path |
-| `ttsFromKana(kana, styleId, options?)` | async | Synthesizes AquesTalk-style kana |
+| `tts(text, styleId, options?)` | async | Synthesizes text, returns the WAV path (`directory` picks cache or documents) |
+| `ttsFromKana(kana, styleId, options?)` | async | Synthesizes AquesTalk-style kana, returns the WAV path |
 | `createAudioQuery(text, styleId)` | async | Builds an AudioQuery from text |
 | `createAudioQueryFromKana(kana, styleId)` | async | Builds an AudioQuery from kana |
 | `synthesis(audioQuery, styleId, options?)` | async | Synthesizes an AudioQuery, returns the WAV path |
+| `speak(text, styleId, options?)` | async | Synthesizes text and plays it back without writing a file |
+| `speakFromKana(kana, styleId, options?)` | async | Same, from AquesTalk-style kana |
+| `speakFromAudioQuery(audioQuery, styleId, options?)` | async | Same, from an AudioQuery |
+| `stopSpeaking()` | async | Stops playback, and cancels an utterance still being synthesized |
+| `isSpeaking()` | sync | Whether audio is currently playing |
+| `waitForSpeech(id)` | async | Waits for an utterance to end and returns how it ended |
+| `addSpeechStateChangeListener(cb)` | sync | Subscribes to playback state changes |
 | `createAccentPhrases(text, styleId)` | async | Builds accent phrases from text |
 | `createAccentPhrasesFromKana(kana, styleId)` | async | Builds accent phrases from kana |
 | `replaceMoraData(phrases, styleId)` | async | Regenerates phoneme lengths and pitches |
@@ -274,7 +364,7 @@ dictionary.
 | `setUserDictWords(words)` | async | Replaces the user dictionary |
 | `loadUserDictFile(path)` | async | Loads a VOICEVOX-format dictionary file and merges it into the current one |
 | `saveUserDictFile(path)` | async | Saves the current user dictionary to a file |
-| `finalize()` | async | Destroys the synthesizer |
+| `finalize()` | async | Stops playback, then destroys the synthesizer |
 
 On iOS `finalize()` frees resources immediately. On Android the Java API has no explicit close, so
 the reference is dropped and release timing is left to the GC.
@@ -284,6 +374,8 @@ the reference is dropped and release timing is left to the GC.
 - Singing synthesis (`s0.vvm` can be bundled, but no synthesis API is exposed)
 - Unloading voice models at runtime (call `initialize()` again instead)
 - Play Asset Delivery on Android (use `assetSource: "download"`)
+- Pausing, resuming or changing the volume of playback (`stopSpeaking()` only)
+- Sentence-by-sentence playback — one `speak()` is one synthesis and one playback
 
 Streaming synthesis does not exist in voicevox_core 0.17.0 itself — neither the C header nor the
 Java `Synthesizer` exposes such an API. `streaming_talk` is a style type, not incremental output.

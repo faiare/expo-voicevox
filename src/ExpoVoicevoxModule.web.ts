@@ -63,6 +63,21 @@ class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   async saveUserDictFile(): Promise<never> {
     throw new Error(UNSUPPORTED);
   }
+  async speak(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async speakFromKana(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async speakFromAudioQuery(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async stopSpeaking(): Promise<void> {
+    // 何も鳴らしていないので何もしない。
+  }
+  isSpeaking(): boolean {
+    return false;
+  }
   async finalize(): Promise<void> {
     // 何も確保していないので何もしない。
   }

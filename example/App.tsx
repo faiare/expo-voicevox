@@ -57,14 +57,24 @@ export default function App() {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [speechState, setSpeechState] = useState('');
 
   const player = useAudioPlayer(null);
 
   useEffect(() => {
     // 消音スイッチが入っていても鳴るようにしておく（iOS）。
+    // これは expo-audio 経由（tts / synthesis がファイルへ書く方）の再生のためのもの。
+    // speak() は audioSession オプションで自前に扱えるので、この設定に依存しない。
     setAudioModeAsync({ playsInSilentMode: true }).catch(() => {
       // 失敗しても合成自体の確認はできるので無視する。
     });
+  }, []);
+
+  useEffect(() => {
+    const subscription = Voicevox.addSpeechStateChangeListener(({ id, state, reason }) => {
+      setSpeechState(reason ? `#${id} ${state}: ${reason}` : `#${id} ${state}`);
+    });
+    return () => subscription.remove();
   }, []);
 
   useEffect(() => {
@@ -176,6 +186,40 @@ export default function App() {
         }));
       }),
     [kana, params, play, styleId, upspeak, withBusy]
+  );
+
+  const handleSpeakOnDemand = useCallback(
+    () =>
+      withBusy('合成して再生しています…', async () => {
+        if (styleId === null) {
+          throw new Error('スタイルを選んでください');
+        }
+        // speak() はファイルを 1 つも作らない。メモリ上の WAV をそのままネイティブで鳴らす。
+        // audioSession: 'exclusive' にすると、setAudioModeAsync を使わなくても
+        // iOS の消音スイッチを越えて鳴る。
+        const utterance = await Voicevox.speak(text, styleId, {
+          enableInterrogativeUpspeak: upspeak,
+          audioSession: 'exclusive',
+        });
+        if (!utterance.started) {
+          setStatus('追い越されたので鳴らしませんでした');
+          return;
+        }
+        setStatus(`再生中 #${utterance.id}（${utterance.durationMillis}ms）`);
+        // 鳴り終わるまで待つ（待たずに投げっぱなしにしてもよい）。
+        const ended = await Voicevox.waitForSpeech(utterance.id);
+        setStatus(`#${utterance.id} ${ended}`);
+      }),
+    [styleId, text, upspeak, withBusy]
+  );
+
+  const handleStopSpeaking = useCallback(
+    () =>
+      withBusy('停止しています…', async () => {
+        await Voicevox.stopSpeaking();
+        setStatus(`停止しました（isSpeaking: ${Voicevox.isSpeaking()}）`);
+      }),
+    [withBusy]
   );
 
   const handleLoadPhrases = useCallback(
@@ -297,6 +341,17 @@ export default function App() {
             onPress={handleSpeak}
             disabled={busy || styleId === null}
           />
+          <Text style={styles.note}>
+            上は synthesis() でキャッシュへ WAV を書き、そのパスを expo-audio に渡しています。
+            下の speak() はファイルを作らず、メモリ上の WAV をネイティブでそのまま鳴らします。
+          </Text>
+          <Button
+            title="speak() で再生（ファイルを作らない）"
+            onPress={handleSpeakOnDemand}
+            disabled={busy || styleId === null}
+          />
+          <Button title="stopSpeaking()" onPress={handleStopSpeaking} disabled={busy} />
+          {speechState ? <Text style={styles.note}>再生状態: {speechState}</Text> : null}
         </Group>
 
         <Group name="4. 合成パラメータ">

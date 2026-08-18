@@ -1,6 +1,8 @@
+import type { VoicevoxSpeechStateChange } from '../ExpoVoicevox.types';
 import ExpoVoicevoxModule from '../ExpoVoicevoxModule';
 import {
   addPrepareProgressListener,
+  addSpeechStateChangeListener,
   audioQueryFromAccentPhrases,
   createAccentPhrases,
   createAccentPhrasesFromKana,
@@ -11,6 +13,7 @@ import {
   getVersion,
   initialize,
   isInitialized,
+  isSpeaking,
   loadUserDictFile,
   prepareAssets,
   replaceMoraData,
@@ -18,9 +21,14 @@ import {
   replacePhonemeLength,
   saveUserDictFile,
   setUserDictWords,
+  speak,
+  speakFromAudioQuery,
+  speakFromKana,
+  stopSpeaking,
   synthesis,
   tts,
   ttsFromKana,
+  waitForSpeech,
 } from '../index';
 
 jest.mock('../ExpoVoicevoxModule', () => ({
@@ -36,6 +44,11 @@ jest.mock('../ExpoVoicevoxModule', () => ({
     createAudioQueryJson: jest.fn(),
     createAudioQueryFromKanaJson: jest.fn(),
     synthesis: jest.fn(),
+    speak: jest.fn(),
+    speakFromKana: jest.fn(),
+    speakFromAudioQuery: jest.fn(),
+    stopSpeaking: jest.fn(),
+    isSpeaking: jest.fn(),
     createAccentPhrasesJson: jest.fn(),
     createAccentPhrasesFromKanaJson: jest.fn(),
     replaceMoraDataJson: jest.fn(),
@@ -51,6 +64,27 @@ jest.mock('../ExpoVoicevoxModule', () => ({
 }));
 
 const nativeModule = ExpoVoicevoxModule as jest.Mocked<typeof ExpoVoicevoxModule>;
+
+const speechListeners: ((change: VoicevoxSpeechStateChange) => void)[] = [];
+
+// 再生状態を購読するのは index.ts の内部（最初の speak() で 1 本だけ張る）と
+// addSpeechStateChangeListener() の両方なので、登録されたものを全部覚えておいて全部呼ぶ。
+// どちらが先に登録されるかに依存させないための作り。
+// jest.clearAllMocks() は実装を消さないので、ここで仕掛けておけば全テストで効く。
+nativeModule.addListener.mockImplementation(((event: string, listener: unknown) => {
+  if (event === 'onSpeechStateChange') {
+    speechListeners.push(listener as (change: VoicevoxSpeechStateChange) => void);
+  }
+  return { remove: jest.fn() };
+}) as never);
+
+/** ネイティブから再生状態のイベントが届いたことにする。 */
+function emitSpeechState(change: VoicevoxSpeechStateChange): void {
+  if (speechListeners.length === 0) {
+    throw new Error('onSpeechStateChange がまだ購読されていない');
+  }
+  speechListeners.forEach((listener) => listener(change));
+}
 
 const validOptions = {
   openJtalkDictDir: '/tmp/voicevox/open_jtalk_dic_utf_8-1.11',
@@ -232,7 +266,7 @@ describe('tts', () => {
     nativeModule.tts.mockResolvedValue('/tmp/cache/voicevox-1.wav');
 
     await expect(tts('こんにちは', 3)).resolves.toBe('/tmp/cache/voicevox-1.wav');
-    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true);
+    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true, 'cache');
   });
 
   it('疑問文の語尾上げを明示的に無効にできる', async () => {
@@ -240,7 +274,7 @@ describe('tts', () => {
 
     await tts('元気ですか', 3, { enableInterrogativeUpspeak: false });
 
-    expect(nativeModule.tts).toHaveBeenCalledWith('元気ですか', 3, false);
+    expect(nativeModule.tts).toHaveBeenCalledWith('元気ですか', 3, false, 'cache');
   });
 
   it('text が空ならネイティブを呼ばずに throw する', () => {
@@ -259,7 +293,7 @@ describe('ttsFromKana', () => {
     nativeModule.ttsFromKana.mockResolvedValue('/tmp/cache/voicevox-2.wav');
 
     await expect(ttsFromKana("コンニチワ'", 3)).resolves.toBe('/tmp/cache/voicevox-2.wav');
-    expect(nativeModule.ttsFromKana).toHaveBeenCalledWith("コンニチワ'", 3, true);
+    expect(nativeModule.ttsFromKana).toHaveBeenCalledWith("コンニチワ'", 3, true, 'cache');
   });
 
   it('kana が空ならネイティブを呼ばずに throw する', () => {
@@ -340,16 +374,229 @@ describe('synthesis', () => {
     query.speedScale = 1.5;
     await expect(synthesis(query, 3)).resolves.toBe('/tmp/cache/voicevox-3.wav');
 
-    const [json, styleId, upspeak] = nativeModule.synthesis.mock.calls[0];
+    const [json, styleId, upspeak, directory] = nativeModule.synthesis.mock.calls[0];
     expect(JSON.parse(json).speedScale).toBe(1.5);
     expect(JSON.parse(json).accent_phrases).toHaveLength(1);
     expect(styleId).toBe(3);
     expect(upspeak).toBe(true);
+    expect(directory).toBe('cache');
   });
 
   it('壊れた AudioQuery はネイティブへ流さずに throw する', () => {
     expect(() => synthesis({ speedScale: 1 } as never, 3)).toThrow('audioQuery');
     expect(nativeModule.synthesis).not.toHaveBeenCalled();
+  });
+});
+
+describe('書き出し先の指定', () => {
+  it('tts は既定で cache を渡す', async () => {
+    nativeModule.tts.mockResolvedValue('/tmp/cache/voicevox-1.wav');
+
+    await tts('こんにちは', 3);
+
+    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true, 'cache');
+  });
+
+  it('tts に document を指定できる', async () => {
+    nativeModule.tts.mockResolvedValue('/tmp/documents/voicevox-1.wav');
+
+    await tts('こんにちは', 3, { directory: 'document' });
+
+    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true, 'document');
+  });
+
+  it('ttsFromKana に document を指定できる', async () => {
+    nativeModule.ttsFromKana.mockResolvedValue('/tmp/documents/voicevox-2.wav');
+
+    await ttsFromKana("コンニチワ'", 3, { directory: 'document' });
+
+    expect(nativeModule.ttsFromKana).toHaveBeenCalledWith("コンニチワ'", 3, true, 'document');
+  });
+
+  it('synthesis に document を指定できる', async () => {
+    nativeModule.createAudioQueryJson.mockResolvedValue(CORE_AUDIO_QUERY_JSON);
+    nativeModule.synthesis.mockResolvedValue('/tmp/documents/voicevox-3.wav');
+    const query = await createAudioQuery('あ', 3);
+
+    await synthesis(query, 3, { directory: 'document' });
+
+    expect(nativeModule.synthesis.mock.calls[0][3]).toBe('document');
+  });
+
+  it('未知の directory はネイティブを呼ばずに throw する', () => {
+    expect(() => tts('こんにちは', 3, { directory: 'tmp' as never })).toThrow('directory');
+    expect(nativeModule.tts).not.toHaveBeenCalled();
+  });
+});
+
+const UTTERANCE = { id: 1, durationMillis: 1200, started: true };
+
+describe('speak', () => {
+  it('テキスト・語尾上げ・オーディオセッションをネイティブへ渡す', async () => {
+    nativeModule.speak.mockResolvedValue(UTTERANCE);
+
+    await expect(speak('こんにちは', 3)).resolves.toEqual(UTTERANCE);
+    expect(nativeModule.speak).toHaveBeenCalledWith('こんにちは', 3, true, 'none');
+  });
+
+  it('オーディオセッションを指定できる', async () => {
+    nativeModule.speak.mockResolvedValue(UTTERANCE);
+
+    await speak('こんにちは', 3, { audioSession: 'duck' });
+
+    expect(nativeModule.speak).toHaveBeenCalledWith('こんにちは', 3, true, 'duck');
+  });
+
+  it('疑問文の語尾上げを明示的に無効にできる', async () => {
+    nativeModule.speak.mockResolvedValue(UTTERANCE);
+
+    await speak('元気ですか', 3, { enableInterrogativeUpspeak: false });
+
+    expect(nativeModule.speak).toHaveBeenCalledWith('元気ですか', 3, false, 'none');
+  });
+
+  it('text が空ならネイティブを呼ばずに throw する', () => {
+    expect(() => speak('', 3)).toThrow('text');
+    expect(nativeModule.speak).not.toHaveBeenCalled();
+  });
+
+  it.each([-1, 1.5])('styleId が %p なら throw する', (styleId) => {
+    expect(() => speak('こんにちは', styleId)).toThrow('styleId');
+    expect(nativeModule.speak).not.toHaveBeenCalled();
+  });
+
+  it('未知の audioSession はネイティブを呼ばずに throw する', () => {
+    expect(() => speak('こんにちは', 3, { audioSession: 'loud' as never })).toThrow('audioSession');
+    expect(nativeModule.speak).not.toHaveBeenCalled();
+  });
+});
+
+describe('speakFromKana', () => {
+  it('カナと語尾上げの指定をネイティブへ渡す', async () => {
+    nativeModule.speakFromKana.mockResolvedValue(UTTERANCE);
+
+    await expect(speakFromKana("コンニチワ'", 3)).resolves.toEqual(UTTERANCE);
+    expect(nativeModule.speakFromKana).toHaveBeenCalledWith("コンニチワ'", 3, true, 'none');
+  });
+
+  it('kana が空ならネイティブを呼ばずに throw する', () => {
+    expect(() => speakFromKana('', 3)).toThrow('kana');
+    expect(nativeModule.speakFromKana).not.toHaveBeenCalled();
+  });
+});
+
+describe('speakFromAudioQuery', () => {
+  it('AudioQuery を JSON にしてネイティブへ渡す', async () => {
+    nativeModule.createAudioQueryJson.mockResolvedValue(CORE_AUDIO_QUERY_JSON);
+    nativeModule.speakFromAudioQuery.mockResolvedValue(UTTERANCE);
+    const query = await createAudioQuery('あ', 3);
+
+    query.speedScale = 1.5;
+    await expect(speakFromAudioQuery(query, 3)).resolves.toEqual(UTTERANCE);
+
+    const [json, styleId, upspeak, audioSession] = nativeModule.speakFromAudioQuery.mock.calls[0];
+    expect(JSON.parse(json).speedScale).toBe(1.5);
+    expect(JSON.parse(json).accent_phrases).toHaveLength(1);
+    expect(styleId).toBe(3);
+    expect(upspeak).toBe(true);
+    expect(audioSession).toBe('none');
+  });
+
+  it('壊れた AudioQuery はネイティブへ流さずに throw する', () => {
+    expect(() => speakFromAudioQuery({ speedScale: 1 } as never, 3)).toThrow('audioQuery');
+    expect(nativeModule.speakFromAudioQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe('stopSpeaking / isSpeaking', () => {
+  it('stopSpeaking はネイティブへそのまま委譲する', async () => {
+    nativeModule.stopSpeaking.mockResolvedValue(undefined);
+
+    await stopSpeaking();
+
+    expect(nativeModule.stopSpeaking).toHaveBeenCalledTimes(1);
+  });
+
+  it('isSpeaking はネイティブの返り値をそのまま返す', () => {
+    nativeModule.isSpeaking.mockReturnValue(true);
+    expect(isSpeaking()).toBe(true);
+  });
+});
+
+describe('addSpeechStateChangeListener', () => {
+  it('onSpeechStateChange を購読する', () => {
+    const listener = jest.fn();
+
+    addSpeechStateChangeListener(listener);
+
+    expect(nativeModule.addListener).toHaveBeenCalledWith('onSpeechStateChange', listener);
+  });
+});
+
+describe('waitForSpeech', () => {
+  it('終端イベントが届くまで待ち、終わり方を返す', async () => {
+    nativeModule.speak.mockResolvedValue({ id: 10, durationMillis: 500, started: true });
+
+    const { id } = await speak('こんにちは', 3);
+    const finished = waitForSpeech(id);
+    emitSpeechState({ id, state: 'finished', reason: '' });
+
+    await expect(finished).resolves.toBe('finished');
+  });
+
+  it("停止されたら 'stopped' を返す", async () => {
+    nativeModule.speak.mockResolvedValue({ id: 11, durationMillis: 500, started: true });
+
+    const { id } = await speak('こんにちは', 3);
+    const done = waitForSpeech(id);
+    emitSpeechState({ id, state: 'stopped', reason: '' });
+
+    await expect(done).resolves.toBe('stopped');
+  });
+
+  it("再生に失敗したら 'failed' を返す（reject はしない）", async () => {
+    nativeModule.speak.mockResolvedValue({ id: 12, durationMillis: 500, started: true });
+
+    const { id } = await speak('こんにちは', 3);
+    const done = waitForSpeech(id);
+    emitSpeechState({ id, state: 'failed', reason: 'could not start the audio player' });
+
+    await expect(done).resolves.toBe('failed');
+  });
+
+  it("追い越された発話は即座に 'stopped' で解決する", async () => {
+    nativeModule.speak.mockResolvedValue({ id: 13, durationMillis: 0, started: false });
+
+    const { id } = await speak('こんにちは', 3);
+
+    await expect(waitForSpeech(id)).resolves.toBe('stopped');
+  });
+
+  it('speak が解決するより先に終端イベントが届いても取りこぼさない', async () => {
+    nativeModule.speak.mockImplementation(async () => {
+      // ごく短い発話だと、ネイティブの解決より先にイベントが届くことがある。
+      emitSpeechState({ id: 14, state: 'finished', reason: '' });
+      return { id: 14, durationMillis: 5, started: true };
+    });
+
+    const { id } = await speak('あ', 3);
+
+    await expect(waitForSpeech(id)).resolves.toBe('finished');
+  });
+
+  it("追跡していない id は 'finished' で解決する", async () => {
+    await expect(waitForSpeech(999_999)).resolves.toBe('finished');
+  });
+
+  it("'started' では解決しない", async () => {
+    nativeModule.speak.mockResolvedValue({ id: 15, durationMillis: 500, started: true });
+
+    const { id } = await speak('こんにちは', 3);
+    emitSpeechState({ id, state: 'started', reason: '' });
+
+    const pending = Symbol('pending');
+    const race = await Promise.race([waitForSpeech(id), Promise.resolve(pending)]);
+    expect(race).toBe(pending);
   });
 });
 
@@ -524,10 +771,25 @@ describe('ユーザー辞書のファイル入出力', () => {
 
 describe('finalize', () => {
   it('ネイティブへそのまま委譲する', async () => {
+    nativeModule.stopSpeaking.mockResolvedValue(undefined);
     nativeModule.finalize.mockResolvedValue(undefined);
 
     await finalize();
 
     expect(nativeModule.finalize).toHaveBeenCalledTimes(1);
+  });
+
+  it('先に stopSpeaking を呼んでから finalize する', async () => {
+    const order: string[] = [];
+    nativeModule.stopSpeaking.mockImplementation(async () => {
+      order.push('stopSpeaking');
+    });
+    nativeModule.finalize.mockImplementation(async () => {
+      order.push('finalize');
+    });
+
+    await finalize();
+
+    expect(order).toEqual(['stopSpeaking', 'finalize']);
   });
 });
