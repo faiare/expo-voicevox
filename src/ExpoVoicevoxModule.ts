@@ -35,7 +35,8 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
     styleId: number,
     enableInterrogativeUpspeak: boolean,
     directory: string,
-    useCache: boolean
+    useCache: boolean,
+    paramsJson: string
   ): Promise<string>;
   /** AquesTalk 風記法のカナを合成し、書き出した WAV ファイルの絶対パスを返す。 */
   ttsFromKana(
@@ -43,7 +44,8 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
     styleId: number,
     enableInterrogativeUpspeak: boolean,
     directory: string,
-    useCache: boolean
+    useCache: boolean,
+    paramsJson: string
   ): Promise<string>;
   /**
    * テキストから AudioQuery を生成し、voicevox-core の JSON 文字列のまま返す。
@@ -85,7 +87,8 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
     styleId: number,
     enableInterrogativeUpspeak: boolean,
     audioSession: string,
-    useCache: boolean
+    useCache: boolean,
+    paramsJson: string
   ): Promise<VoicevoxUtterance>;
   /** AquesTalk 風記法のカナを合成し、そのまま再生する。 */
   speakFromKana(
@@ -93,7 +96,8 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
     styleId: number,
     enableInterrogativeUpspeak: boolean,
     audioSession: string,
-    useCache: boolean
+    useCache: boolean,
+    paramsJson: string
   ): Promise<VoicevoxUtterance>;
   /** AudioQuery の JSON を合成し、そのまま再生する。 */
   speakFromAudioQuery(
@@ -103,6 +107,26 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
     audioSession: string,
     useCache: boolean
   ): Promise<VoicevoxUtterance>;
+  /** 鳴らさずに合成だけ済ませ、キャッシュへ入れる。 */
+  precacheSpeech(
+    text: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean,
+    paramsJson: string
+  ): Promise<void>;
+  /** `precacheSpeech` のカナ版。 */
+  precacheSpeechFromKana(
+    kana: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean,
+    paramsJson: string
+  ): Promise<void>;
+  /** `precacheSpeech` の AudioQuery 版。 */
+  precacheSpeechFromAudioQuery(
+    audioQueryJson: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean
+  ): Promise<void>;
   /** 再生中の発話を止める。合成中の発話も鳴らさずに終わらせる。 */
   stopSpeaking(): Promise<void>;
   /** 音が鳴っているか。合成中はまだ false。 */

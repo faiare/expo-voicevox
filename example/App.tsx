@@ -218,6 +218,29 @@ export default function App() {
     [styleId, text, upspeak, withBusy]
   );
 
+  // AudioQuery を組み立てずに話速と頭出しを変える。ネイティブが createAudioQuery を挟むが、
+  // 言語解析だけで音響モデルの推論は入らないので増えるのは数十 ms。
+  const handleSpeakFaster = useCallback(
+    () =>
+      withBusy('合成して再生しています…', async () => {
+        if (styleId === null) {
+          throw new Error('スタイルを選んでください');
+        }
+        const started = Date.now();
+        const utterance = await Voicevox.speak(text, styleId, {
+          enableInterrogativeUpspeak: upspeak,
+          audioSession: 'exclusive',
+          speedScale: 1.1,
+          prePhonemeLength: 0,
+        });
+        setStatus(
+          `speedScale 1.1 / prePhonemeLength 0（合成 ${Date.now() - started}ms / ` +
+            `再生 ${utterance.durationMillis}ms）`
+        );
+      }),
+    [styleId, text, upspeak, withBusy]
+  );
+
   const handleStopSpeaking = useCallback(
     () =>
       withBusy('停止しています…', async () => {
@@ -248,6 +271,32 @@ export default function App() {
         setStatus(
           `1 回目 ${cold}ms / 2 回目 ${warm}ms（hits ${stats.hits} / misses ${stats.misses} / ` +
             `${stats.entryCount} 件 ${Math.round(stats.bytes / 1024)}KB）`
+        );
+      }),
+    [styleId, text, upspeak, withBusy]
+  );
+
+  // 押した瞬間に喋らせたい画面のための「先に合成だけしておく」経路。
+  const handlePrecache = useCallback(
+    () =>
+      withBusy('先に合成しています…', async () => {
+        if (styleId === null) {
+          throw new Error('スタイルを選んでください');
+        }
+        await Voicevox.clearSynthesisCache();
+
+        const precacheStart = Date.now();
+        await Voicevox.precacheSpeech(text, styleId, { enableInterrogativeUpspeak: upspeak });
+        const precache = Date.now() - precacheStart;
+
+        const speakStart = Date.now();
+        const utterance = await Voicevox.speak(text, styleId, {
+          enableInterrogativeUpspeak: upspeak,
+          audioSession: 'exclusive',
+        });
+        setStatus(
+          `precacheSpeech ${precache}ms → speak ${Date.now() - speakStart}ms` +
+            `（started: ${utterance.started}）`
         );
       }),
     [styleId, text, upspeak, withBusy]
@@ -414,6 +463,11 @@ export default function App() {
           <Button
             title="speak() で再生（ファイルを作らない）"
             onPress={handleSpeakOnDemand}
+            disabled={busy || styleId === null}
+          />
+          <Button
+            title="speak() で再生（speedScale 1.1 / prePhonemeLength 0）"
+            onPress={handleSpeakFaster}
             disabled={busy || styleId === null}
           />
           {/* 再生中は busy になるので、停止だけは busy でも押せるようにしておく。 */}
@@ -661,6 +715,11 @@ export default function App() {
           <Button
             title="キャッシュの効きを測る（同じ入力で 2 回合成）"
             onPress={handleMeasureCache}
+            disabled={busy || styleId === null}
+          />
+          <Button
+            title="precacheSpeech() で温めてから speak()"
+            onPress={handlePrecache}
             disabled={busy || styleId === null}
           />
           <Button title="getSynthesisCacheStats()" onPress={handleCacheStats} disabled={busy} />

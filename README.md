@@ -225,15 +225,41 @@ playback. Keep `'none'` if something else owns the audio session.
 There is no pause, resume or volume control — only `stopSpeaking()`. One `speak()` is one synthesis
 and one playback; long text is not split into sentences and streamed.
 
+### Changing speed and timing without an AudioQuery
+
+`speak()`, `speakFromKana()`, `tts()` and `ttsFromKana()` take the common AudioQuery fields
+directly, so you don't have to go through `createAudioQuery()` for the usual adjustments:
+
+```ts
+await Voicevox.speak('こんにちは', 3, {
+  speedScale: 1.1,        // faster
+  prePhonemeLength: 0,    // start speaking immediately
+});
+```
+
+`speedScale`, `pitchScale`, `intonationScale`, `volumeScale`, `prePhonemeLength` and
+`postPhonemeLength` are accepted. Passing any of them makes the native side build an AudioQuery,
+apply the overrides and synthesize from it — which is exactly what `tts()` does internally, so the
+audio is identical. The extra step is Open JTalk's linguistic analysis only, no acoustic inference,
+so it costs tens of milliseconds and it is skipped entirely on a cache hit.
+
+`prePhonemeLength` and `postPhonemeLength` default to 0.1 s each. Dropping the leading one to `0`
+is the cheapest way to make short prompts feel immediate.
+
+`speakFromAudioQuery()` and `synthesis()` do not take these — the AudioQuery you pass already
+carries them. For anything finer (per-accent-phrase or per-mora edits) use `createAudioQuery()`
+and `synthesis()` / `speakFromAudioQuery()`.
+
 ### Reusing synthesized audio
 
 Synthesis is the expensive part — hundreds of milliseconds to several seconds on a phone. The same
 request is therefore synthesized only once: the WAV is kept in an in-memory LRU cache and replayed
 straight from there. This applies to every synthesis entry point, `speak()` and `tts()` alike.
 
-A request is "the same" when the kind (text / kana / AudioQuery), the payload, the `styleId` and
-`enableInterrogativeUpspeak` all match. `directory` is not part of the key — `tts()` still writes a
-fresh file and returns a new path on every call, it just skips the inference.
+A request is "the same" when the kind (text / kana / AudioQuery), the payload, the `styleId`,
+`enableInterrogativeUpspeak` and the synthesis parameters above all match. `directory` is not part
+of the key — `tts()` still writes a fresh file and returns a new path on every call, it just skips
+the inference.
 
 The cache is bounded by total bytes, not by entry count. The default is 32 MB, which is roughly
 11 minutes of audio at the 24 kHz mono 16-bit voicevox-core produces:
@@ -271,6 +297,26 @@ neither reads nor writes — it always synthesizes anew and stores nothing:
 ```ts
 await Voicevox.speak(`${userName}さん、こんにちは`, 3, { cache: false });
 ```
+
+### Warming the cache up front
+
+When a tap has to be answered by speech immediately, synthesize ahead of time.
+`precacheSpeech()` runs the synthesis and stores it in the cache without playing anything or
+writing a file, so the later `speak()` starts at once:
+
+```ts
+useEffect(() => {
+  Voicevox.precacheSpeech('保存しました', 3, { speedScale: 1.1 });
+}, []);
+
+// later, on tap
+await Voicevox.speak('保存しました', 3, { speedScale: 1.1 }); // no inference
+```
+
+Pass the *same* options you will pass to `speak()` — the cache key includes them, so
+precaching with `speedScale: 1.1` does nothing for a `speak()` without it. There are
+`precacheSpeechFromKana()` and `precacheSpeechFromAudioQuery()` too. All three run on the
+synthesis queue, so they queue up behind an in-flight synthesis instead of competing with it.
 
 ### Where WAV files are written
 
@@ -404,6 +450,9 @@ dictionary.
 | `speak(text, styleId, options?)` | async | Synthesizes text and plays it back without writing a file |
 | `speakFromKana(kana, styleId, options?)` | async | Same, from AquesTalk-style kana |
 | `speakFromAudioQuery(audioQuery, styleId, options?)` | async | Same, from an AudioQuery |
+| `precacheSpeech(text, styleId, options?)` | async | Synthesizes into the cache without playing or writing a file |
+| `precacheSpeechFromKana(kana, styleId, options?)` | async | Same, from AquesTalk-style kana |
+| `precacheSpeechFromAudioQuery(audioQuery, styleId, options?)` | async | Same, from an AudioQuery |
 | `stopSpeaking()` | async | Stops playback, and cancels an utterance still being synthesized |
 | `isSpeaking()` | sync | Whether audio is currently playing |
 | `waitForSpeech(id)` | async | Waits for an utterance to end and returns how it ended |

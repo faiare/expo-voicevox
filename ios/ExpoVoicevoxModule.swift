@@ -143,20 +143,22 @@ public class ExpoVoicevoxModule: Module {
 
     AsyncFunction("tts") {
       (text: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String,
-        useCache: Bool) -> String in
+        useCache: Bool, paramsJson: String) -> String in
       let key = VoicevoxWavCache.key(
         kind: "text",
         styleId: styleId,
         enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
         payload: text
       )
       return try self.synthesize(
         styleId: styleId, directory: directory, cacheKey: key, useCache: useCache
       ) { styleId in
-        try self.engine.tts(
+        try self.synthesizeText(
           text: text,
           styleId: styleId,
-          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+          paramsJson: paramsJson
         )
       }
     }
@@ -164,20 +166,22 @@ public class ExpoVoicevoxModule: Module {
 
     AsyncFunction("ttsFromKana") {
       (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String,
-        useCache: Bool) -> String in
+        useCache: Bool, paramsJson: String) -> String in
       let key = VoicevoxWavCache.key(
         kind: "kana",
         styleId: styleId,
         enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
         payload: kana
       )
       return try self.synthesize(
         styleId: styleId, directory: directory, cacheKey: key, useCache: useCache
       ) { styleId in
-        try self.engine.ttsFromKana(
+        try self.synthesizeKana(
           kana: kana,
           styleId: styleId,
-          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+          paramsJson: paramsJson
         )
       }
     }
@@ -255,6 +259,7 @@ public class ExpoVoicevoxModule: Module {
         kind: "query",
         styleId: styleId,
         enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: "",
         payload: audioQueryJson
       )
       return try self.synthesize(
@@ -271,21 +276,23 @@ public class ExpoVoicevoxModule: Module {
 
     AsyncFunction("speak") {
       (text: String, styleId: Int, enableInterrogativeUpspeak: Bool, audioSession: String,
-        useCache: Bool, promise: Promise) in
+        useCache: Bool, paramsJson: String, promise: Promise) in
       let key = VoicevoxWavCache.key(
         kind: "text",
         styleId: styleId,
         enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
         payload: text
       )
       self.speakWav(
         styleId: styleId, audioSession: audioSession, cacheKey: key, useCache: useCache,
         promise: promise
       ) { styleId in
-        try self.engine.tts(
+        try self.synthesizeText(
           text: text,
           styleId: styleId,
-          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+          paramsJson: paramsJson
         )
       }
     }
@@ -293,21 +300,23 @@ public class ExpoVoicevoxModule: Module {
 
     AsyncFunction("speakFromKana") {
       (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool, audioSession: String,
-        useCache: Bool, promise: Promise) in
+        useCache: Bool, paramsJson: String, promise: Promise) in
       let key = VoicevoxWavCache.key(
         kind: "kana",
         styleId: styleId,
         enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
         payload: kana
       )
       self.speakWav(
         styleId: styleId, audioSession: audioSession, cacheKey: key, useCache: useCache,
         promise: promise
       ) { styleId in
-        try self.engine.ttsFromKana(
+        try self.synthesizeKana(
           kana: kana,
           styleId: styleId,
-          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+          paramsJson: paramsJson
         )
       }
     }
@@ -320,6 +329,7 @@ public class ExpoVoicevoxModule: Module {
         kind: "query",
         styleId: styleId,
         enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: "",
         payload: audioQueryJson
       )
       self.speakWav(
@@ -331,6 +341,76 @@ public class ExpoVoicevoxModule: Module {
           styleId: styleId,
           enableInterrogativeUpspeak: enableInterrogativeUpspeak
         )
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    // 鳴らさずキャッシュにだけ入れる。押した瞬間に喋らせたい画面で、事前に温めておくための口。
+    AsyncFunction("precacheSpeech") {
+      (text: String, styleId: Int, enableInterrogativeUpspeak: Bool, paramsJson: String) in
+      let key = VoicevoxWavCache.key(
+        kind: "text",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
+        payload: text
+      )
+      let checked = try self.checkedStyleId(styleId)
+      // WAV そのものは JS へ渡さない（ブリッジを数百 KB 通しても使い道が無い）。
+      _ = try self.wrappingErrors {
+        try self.cachedWav(key: key, useCache: true) {
+          try self.synthesizeText(
+            text: text,
+            styleId: checked,
+            enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+            paramsJson: paramsJson
+          )
+        }
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("precacheSpeechFromKana") {
+      (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool, paramsJson: String) in
+      let key = VoicevoxWavCache.key(
+        kind: "kana",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
+        payload: kana
+      )
+      let checked = try self.checkedStyleId(styleId)
+      _ = try self.wrappingErrors {
+        try self.cachedWav(key: key, useCache: true) {
+          try self.synthesizeKana(
+            kana: kana,
+            styleId: checked,
+            enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+            paramsJson: paramsJson
+          )
+        }
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("precacheSpeechFromAudioQuery") {
+      (audioQueryJson: String, styleId: Int, enableInterrogativeUpspeak: Bool) in
+      let key = VoicevoxWavCache.key(
+        kind: "query",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: "",
+        payload: audioQueryJson
+      )
+      let checked = try self.checkedStyleId(styleId)
+      _ = try self.wrappingErrors {
+        try self.cachedWav(key: key, useCache: true) {
+          try self.engine.synthesis(
+            audioQueryJson: audioQueryJson,
+            styleId: checked,
+            enableInterrogativeUpspeak: enableInterrogativeUpspeak
+          )
+        }
       }
     }
     .runOnQueue(engineQueue)
@@ -387,6 +467,45 @@ public class ExpoVoicevoxModule: Module {
       throw VoicevoxException("synthesisCacheBytes is out of range: \(raw)")
     }
     return limit
+  }
+
+  /// テキストを合成する。engineQueue の上でだけ呼ぶこと。
+  ///
+  /// 合成パラメータの上書きが無ければ `tts` をそのまま使う。あるときだけ AudioQuery を挟む。
+  /// `tts` は「AudioQuery を作って synthesis する」ことの短縮形なので、出力は一致する。
+  private func synthesizeText(
+    text: String,
+    styleId: UInt32,
+    enableInterrogativeUpspeak: Bool,
+    paramsJson: String
+  ) throws -> Data {
+    guard !paramsJson.isEmpty else {
+      return try engine.tts(
+        text: text, styleId: styleId, enableInterrogativeUpspeak: enableInterrogativeUpspeak)
+    }
+    let query = try VoicevoxAudioQueryPatch.apply(
+      paramsJson, to: try engine.createAudioQueryJson(text: text, styleId: styleId))
+    return try engine.synthesis(
+      audioQueryJson: query, styleId: styleId,
+      enableInterrogativeUpspeak: enableInterrogativeUpspeak)
+  }
+
+  /// `synthesizeText` のカナ版。
+  private func synthesizeKana(
+    kana: String,
+    styleId: UInt32,
+    enableInterrogativeUpspeak: Bool,
+    paramsJson: String
+  ) throws -> Data {
+    guard !paramsJson.isEmpty else {
+      return try engine.ttsFromKana(
+        kana: kana, styleId: styleId, enableInterrogativeUpspeak: enableInterrogativeUpspeak)
+    }
+    let query = try VoicevoxAudioQueryPatch.apply(
+      paramsJson, to: try engine.createAudioQueryFromKanaJson(kana: kana, styleId: styleId))
+    return try engine.synthesis(
+      audioQueryJson: query, styleId: styleId,
+      enableInterrogativeUpspeak: enableInterrogativeUpspeak)
   }
 
   /// キャッシュを引いてから合成する。engineQueue の上でだけ呼ぶこと。

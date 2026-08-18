@@ -10,7 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `src/ExpoVoicevoxModule.web.ts` はテンプレート由来の web スタブ。web はサポート対象外なので、API 追加時に web 実装を作り込む必要はない（バンドラの解決を壊さないためにファイル自体は残す）。
 - 音声合成 API は実装済み。基本（`getVersion` / `isInitialized` / `prepareAssets` / `initialize` / `getCharacters` / `tts` / `finalize`）に加え、AudioQuery 一式（`createAudioQuery` / `createAudioQueryFromKana` / `synthesis` / `ttsFromKana`）、アクセント句編集（`createAccentPhrases` 系 / `replaceMoraData` / `replacePhonemeLength` / `replaceMoraPitch` / `audioQueryFromAccentPhrases`）、ユーザー辞書（`setUserDictWords` / `loadUserDictFile` / `saveUserDictFile`）が揃っている。アセットの取得と配置は `plugin/` の config plugin が担う。
 - メモリ上の WAV をそのまま鳴らす `speak` 系（`speak` / `speakFromKana` / `speakFromAudioQuery` / `stopSpeaking` / `isSpeaking` / `waitForSpeech`）もある。再生制御は停止までで、pause / resume / volume と文分割の逐次再生は入れていない（1 発話 = 1 合成 = 1 再生）。
-- 合成結果はネイティブ側の LRU キャッシュに載るので、同じ入力の 2 回目は推論をやり直さない（`clearSynthesisCache` / `getSynthesisCacheStats`、`initialize` の `synthesisCacheBytes`、各呼び出しの `cache: false`）。
+- 合成結果はネイティブ側の LRU キャッシュに載るので、同じ入力の 2 回目は推論をやり直さない（`clearSynthesisCache` / `getSynthesisCacheStats`、`initialize` の `synthesisCacheBytes`、各呼び出しの `cache: false`）。鳴らさず温めるだけの `precacheSpeech` 系もある。
+- `speak` / `tts` 系は `speedScale` / `prePhonemeLength` などの合成パラメータを直接受ける（AudioQuery を組み立てずに話速と頭出しを変えられる）。
 - **未対応**は歌唱合成（SING）とモデルの実行時アンロードのみ。ストリーミング合成は voicevox_core 0.17.0 自体に API が無い（C ヘッダに `stream` の出現が 0 件）ので「未対応」ではなく「上流に無い」。
 
 ## コマンド
@@ -209,9 +210,13 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
   `engineLock` で直列化済みなので、キャッシュ自身はロックを持たない。`clearSynthesisCache` /
   `getSynthesisCacheStats` も同じキュー・ロックに載せる（**同期関数にしない**。JS スレッドが
   合成の完了まで止まる）。
-- **キーは `(種別, styleId, 語尾上げ, ペイロード)`**。ペイロードは自由形式なので必ず最後に置く。
+- **キーは `(種別, styleId, 語尾上げ, 合成パラメータ JSON, ペイロード)`**。ペイロードは自由形式なので
+  必ず最後に置く。合成パラメータの JSON は JS が固定順（`SYNTHESIS_PARAM_KEYS`）で組み立てるので、
+  オブジェクトの書き順が変わってもキーは変わらない。
   `directory` は含めない（合成結果は書き出し先に依存しない）。`tts` 系はキャッシュに当たっても
   ファイルは毎回書くので、返るパスは常に別物。
+- **`precacheSpeech` 系は「鳴らさず・書かず・キャッシュにだけ入れる」**。`cache: false` は付けられない
+  （付けたら何も残らず呼ぶ意味が無い）。
 - **上限は件数ではなくバイト数**（既定 32MB）。1 件の WAV は数十 KB〜数 MB と幅があり、件数では
   メモリ使用量の上限が読めない。単体で上限を超える WAV は格納しない。
 - `android.util.LruCache` と `NSCache` は使わない。前者は Android API なので JVM ユニットテストで
@@ -219,6 +224,21 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
   揃えるため自前で書いてある**ので、追い出しの規則を変えるときは両方を直すこと。
 - **`ios/` に Swift ファイルを足したら `pod install` が要る**。podspec の glob は pod install 時に
   展開されるので、回さないと `cannot find 'VoicevoxWavCache' in scope` でビルドが落ちる。
+
+### 合成パラメータの直接指定（speedScale など）
+
+`speak` / `tts` 系は `speedScale` / `prePhonemeLength` などを直接受ける。指定があるとネイティブは
+`tts` ではなく **createAudioQuery → JSON を書き換え → synthesis** の経路を通る（`tts` はこの 2 つを
+繋いでいるだけなので、上書きが無ければ出力は一致する）。
+
+- 書き換えは `VoicevoxAudioQueryPatch`（`ios/` と `android/` に 1:1 で置いてある）。**トップレベルの
+  フィールドしか触らない**。`accent_phrases` の中に入る編集は `createAudioQuery` / `synthesis` の担当。
+- **AudioQuery に無いキーは例外にする**。黙って無視すると、綴りを間違えたまま「効かない」だけの
+  バグになって気付けない。
+- JS からは**固定順の JSON 文字列 1 本**で渡す（`resolveSynthesisParams`）。Record を増やすより
+  キャッシュキーに載せやすく、「空文字なら上書き無し」でネイティブ側の分岐も 1 つで済む。
+- `speakFromAudioQuery` / `synthesis` はこれを**受け取らない**。AudioQuery 自身がパラメータを
+  持っているので、重ねられるとどちらが効くのか読めなくなる。
 
 ### AudioQuery のブリッジ（重要）
 
@@ -267,7 +287,7 @@ Swift の `String` を `voicevox_user_dict_word_make` にそのまま渡して�
 
 #### エージェント向けの落とし穴
 
-- **`package.json` の `files` を指定すると `.npmignore` は完全に無視される**（npm-packlist はこの許可リストだけを見る）。`ios` / `android` をディレクトリごと書くと、plugin が prebuild 時に取得する `ios/Frameworks` `android/libs` `android/src/main/jniLibs` や Gradle の `android/build` まで tarball に入り 100MB を超える。必要なパスだけを列挙すること。変更したら必ず `npm pack --dry-run --json --ignore-scripts` で中身を確認する（正常値: 95 ファイル前後 / tarball 105KB 前後・展開後 400KB 前後。最大のファイルは `plugin/build/vvm/catalog.generated.js` の約 36KB）。ネイティブバイナリが 1 つでも混ざれば MB 単位になるので、桁で判断できる。
+- **`package.json` の `files` を指定すると `.npmignore` は完全に無視される**（npm-packlist はこの許可リストだけを見る）。`ios` / `android` をディレクトリごと書くと、plugin が prebuild 時に取得する `ios/Frameworks` `android/libs` `android/src/main/jniLibs` や Gradle の `android/build` まで tarball に入り 100MB を超える。必要なパスだけを列挙すること。変更したら必ず `npm pack --dry-run --json --ignore-scripts` で中身を確認する（正常値: 100 ファイル前後 / tarball 150KB 前後・展開後 580KB 前後。最大のファイルは `plugin/build/vvm/catalog.generated.js` の約 36KB）。ネイティブバイナリが 1 つでも混ざれば MB 単位になるので、桁で判断できる。
 - **`plugin/tsconfig.json` の `tsBuildInfoFile` は `./build/` の中を指すこと**。既定では `plugin/tsconfig.tsbuildinfo` に出るため、`internal/module_scripts/prepare.js` が `plugin/build` を消しても `tsc --build` が「最新」と判断して何も出力せず、**publish 時に `plugin/build` が空になる**。
 - **`plugin/jest.config.js` は `transform` を上書きしている**。`jest-expo/node` プリセット（`getNodePreset()`）は babel-jest のオプションを `caller` だけで置き換えるため、素の jest-expo プリセットが入れている `babel-preset-expo` が落ちて TypeScript を解釈できなくなる。
 - **config plugin から `resolveFrom(projectRoot, '@faiare/expo-voicevox')` は使えない**。`example/package.json` の `nativeModulesDir: ".."` は autolinking 専用でモジュール解決には効かず、example から `@faiare/expo-voicevox` は resolve できない。パッケージルートは `__dirname` 基準で求めること。同じ理由で `example/app.json` の plugin 指定は `"../app.plugin.js"` という相対パス形式になる（利用者向けの README には `"@faiare/expo-voicevox"` 形式を書く）。

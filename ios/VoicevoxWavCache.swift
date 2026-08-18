@@ -101,15 +101,17 @@ final class VoicevoxWavCache {
   /// キャッシュキーを組み立てる。
   ///
   /// ペイロード（テキスト / カナ / AudioQuery の JSON）は自由形式なので必ず最後に置く。
-  /// 前段の固定長フィールドと衝突させないため。書き出し先ディレクトリは合成結果に影響しないので
+  /// 前段のフィールドと衝突させないため。`params` は JS が固定順で組み立てた JSON 文字列で、
+  /// 空白を含まないのでここで区切りに使える。書き出し先ディレクトリは合成結果に影響しないので
   /// キーに含めない。
   static func key(
     kind: String,
     styleId: Int,
     enableInterrogativeUpspeak: Bool,
+    params: String,
     payload: String
   ) -> String {
-    "\(kind) \(styleId) \(enableInterrogativeUpspeak ? 1 : 0) \(payload)"
+    "\(kind) \(styleId) \(enableInterrogativeUpspeak ? 1 : 0) \(params) \(payload)"
   }
 
   // MARK: - Private

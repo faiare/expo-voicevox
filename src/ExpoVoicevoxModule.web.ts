@@ -72,6 +72,15 @@ class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   async speakFromAudioQuery(): Promise<never> {
     throw new Error(UNSUPPORTED);
   }
+  async precacheSpeech(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async precacheSpeechFromKana(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async precacheSpeechFromAudioQuery(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
   async stopSpeaking(): Promise<void> {
     // 何も鳴らしていないので何もしない。
   }

@@ -142,14 +142,17 @@ class ExpoVoicevoxModule : Module() {
       styleId: Int,
       enableInterrogativeUpspeak: Boolean,
       directory: String,
-      useCache: Boolean ->
+      useCache: Boolean,
+      paramsJson: String ->
       // 書き出し先の検証とキーの組み立てはロックの外で済ませる。
       val outputDir = outputDirectory(directory)
-      val key = VoicevoxWavCache.key("text", styleId, enableInterrogativeUpspeak, text)
+      val key = VoicevoxWavCache.key("text", styleId, enableInterrogativeUpspeak, paramsJson, text)
       synchronized(engineLock) {
         runWrappingErrors("speech synthesis failed") {
           val wav =
-            cachedWav(key, useCache) { engine.tts(text, styleId, enableInterrogativeUpspeak) }
+            cachedWav(key, useCache) {
+              synthesizeText(text, styleId, enableInterrogativeUpspeak, paramsJson)
+            }
           writeWav(wav, outputDir)
         }
       }
@@ -160,14 +163,15 @@ class ExpoVoicevoxModule : Module() {
       styleId: Int,
       enableInterrogativeUpspeak: Boolean,
       directory: String,
-      useCache: Boolean ->
+      useCache: Boolean,
+      paramsJson: String ->
       val outputDir = outputDirectory(directory)
-      val key = VoicevoxWavCache.key("kana", styleId, enableInterrogativeUpspeak, kana)
+      val key = VoicevoxWavCache.key("kana", styleId, enableInterrogativeUpspeak, paramsJson, kana)
       synchronized(engineLock) {
         runWrappingErrors("speech synthesis failed") {
           val wav =
             cachedWav(key, useCache) {
-              engine.ttsFromKana(kana, styleId, enableInterrogativeUpspeak)
+              synthesizeKana(kana, styleId, enableInterrogativeUpspeak, paramsJson)
             }
           writeWav(wav, outputDir)
         }
@@ -244,7 +248,7 @@ class ExpoVoicevoxModule : Module() {
       directory: String,
       useCache: Boolean ->
       val outputDir = outputDirectory(directory)
-      val key = VoicevoxWavCache.key("query", styleId, enableInterrogativeUpspeak, audioQueryJson)
+      val key = VoicevoxWavCache.key("query", styleId, enableInterrogativeUpspeak, "", audioQueryJson)
       synchronized(engineLock) {
         runWrappingErrors("speech synthesis failed") {
           val wav =
@@ -262,10 +266,11 @@ class ExpoVoicevoxModule : Module() {
       enableInterrogativeUpspeak: Boolean,
       audioSession: String,
       useCache: Boolean,
+      paramsJson: String,
       promise: Promise ->
-      val key = VoicevoxWavCache.key("text", styleId, enableInterrogativeUpspeak, text)
+      val key = VoicevoxWavCache.key("text", styleId, enableInterrogativeUpspeak, paramsJson, text)
       speakWav(key, useCache, audioSession, promise) {
-        engine.tts(text, styleId, enableInterrogativeUpspeak)
+        synthesizeText(text, styleId, enableInterrogativeUpspeak, paramsJson)
       }
     }
 
@@ -275,10 +280,11 @@ class ExpoVoicevoxModule : Module() {
       enableInterrogativeUpspeak: Boolean,
       audioSession: String,
       useCache: Boolean,
+      paramsJson: String,
       promise: Promise ->
-      val key = VoicevoxWavCache.key("kana", styleId, enableInterrogativeUpspeak, kana)
+      val key = VoicevoxWavCache.key("kana", styleId, enableInterrogativeUpspeak, paramsJson, kana)
       speakWav(key, useCache, audioSession, promise) {
-        engine.ttsFromKana(kana, styleId, enableInterrogativeUpspeak)
+        synthesizeKana(kana, styleId, enableInterrogativeUpspeak, paramsJson)
       }
     }
 
@@ -289,9 +295,55 @@ class ExpoVoicevoxModule : Module() {
       audioSession: String,
       useCache: Boolean,
       promise: Promise ->
-      val key = VoicevoxWavCache.key("query", styleId, enableInterrogativeUpspeak, audioQueryJson)
+      val key = VoicevoxWavCache.key("query", styleId, enableInterrogativeUpspeak, "", audioQueryJson)
       speakWav(key, useCache, audioSession, promise) {
         engine.synthesis(audioQueryJson, styleId, enableInterrogativeUpspeak)
+      }
+    }
+
+    // 鳴らさずキャッシュにだけ入れる。押した瞬間に喋らせたい画面で、事前に温めておくための口。
+    AsyncFunction("precacheSpeech") {
+      text: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean,
+      paramsJson: String ->
+      val key = VoicevoxWavCache.key("text", styleId, enableInterrogativeUpspeak, paramsJson, text)
+      synchronized(engineLock) {
+        runWrappingErrors("speech synthesis failed") {
+          cachedWav(key, true) {
+            synthesizeText(text, styleId, enableInterrogativeUpspeak, paramsJson)
+          }
+        }
+      }
+      // WAV そのものは JS へ渡さない（ブリッジを数百 KB 通しても使い道が無い）。
+    }
+
+    AsyncFunction("precacheSpeechFromKana") {
+      kana: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean,
+      paramsJson: String ->
+      val key = VoicevoxWavCache.key("kana", styleId, enableInterrogativeUpspeak, paramsJson, kana)
+      synchronized(engineLock) {
+        runWrappingErrors("speech synthesis failed") {
+          cachedWav(key, true) {
+            synthesizeKana(kana, styleId, enableInterrogativeUpspeak, paramsJson)
+          }
+        }
+      }
+    }
+
+    AsyncFunction("precacheSpeechFromAudioQuery") {
+      audioQueryJson: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean ->
+      val key = VoicevoxWavCache.key("query", styleId, enableInterrogativeUpspeak, "", audioQueryJson)
+      synchronized(engineLock) {
+        runWrappingErrors("speech synthesis failed") {
+          cachedWav(key, true) {
+            engine.synthesis(audioQueryJson, styleId, enableInterrogativeUpspeak)
+          }
+        }
       }
     }
 
@@ -347,6 +399,43 @@ class ExpoVoicevoxModule : Module() {
       throw VoicevoxException("synthesisCacheBytes is out of range: $raw")
     }
     return raw.toLong()
+  }
+
+  /**
+   * テキストを合成する。[engineLock] を握った状態で呼ぶこと。
+   *
+   * 合成パラメータの上書きが無ければ `tts` をそのまま使う。あるときだけ AudioQuery を挟む。
+   * `tts` は「AudioQuery を作って synthesis する」ことの短縮形なので、出力は一致する。
+   */
+  private fun synthesizeText(
+    text: String,
+    styleId: Int,
+    enableInterrogativeUpspeak: Boolean,
+    paramsJson: String
+  ): ByteArray {
+    if (paramsJson.isEmpty()) {
+      return engine.tts(text, styleId, enableInterrogativeUpspeak)
+    }
+    val query = VoicevoxAudioQueryPatch.apply(engine.createAudioQueryJson(text, styleId), paramsJson)
+    return engine.synthesis(query, styleId, enableInterrogativeUpspeak)
+  }
+
+  /** [synthesizeText] のカナ版。 */
+  private fun synthesizeKana(
+    kana: String,
+    styleId: Int,
+    enableInterrogativeUpspeak: Boolean,
+    paramsJson: String
+  ): ByteArray {
+    if (paramsJson.isEmpty()) {
+      return engine.ttsFromKana(kana, styleId, enableInterrogativeUpspeak)
+    }
+    val query =
+      VoicevoxAudioQueryPatch.apply(
+        engine.createAudioQueryFromKanaJson(kana, styleId),
+        paramsJson
+      )
+    return engine.synthesis(query, styleId, enableInterrogativeUpspeak)
   }
 
   /**

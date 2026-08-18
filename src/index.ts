@@ -11,12 +11,16 @@ import type {
   VoicevoxCharacter,
   VoicevoxInitializeOptions,
   VoicevoxOutputDirectory,
+  VoicevoxPrecacheOptions,
   VoicevoxPrepareProgress,
   VoicevoxSpeakOptions,
   VoicevoxSpeechState,
   VoicevoxSpeechStateChange,
   VoicevoxSynthesisCacheStats,
   VoicevoxSynthesisOptions,
+  VoicevoxSynthesisParams,
+  VoicevoxTextSpeakOptions,
+  VoicevoxTextSynthesisOptions,
   VoicevoxUserDictWord,
   VoicevoxUserDictWordType,
   VoicevoxUtterance,
@@ -87,6 +91,45 @@ function resolveUseCache(
   options: VoicevoxSynthesisOptions | VoicevoxSpeakOptions | undefined
 ): boolean {
   return options?.cache ?? true;
+}
+
+/**
+ * `VoicevoxSynthesisParams` の順序。JSON 文字列に固める順番をここで固定する。
+ *
+ * この文字列はネイティブのキャッシュキーの一部になるので、オブジェクトの列挙順に依存させない。
+ */
+const SYNTHESIS_PARAM_KEYS: (keyof VoicevoxSynthesisParams)[] = [
+  'speedScale',
+  'pitchScale',
+  'intonationScale',
+  'volumeScale',
+  'prePhonemeLength',
+  'postPhonemeLength',
+];
+
+/**
+ * 合成パラメータの上書きを JSON 文字列にする。1 つも指定が無ければ空文字。
+ *
+ * 空文字はネイティブ側で「上書き無し」の合図になり、AudioQuery を挟まない速い経路を通る。
+ */
+function resolveSynthesisParams(options: VoicevoxSynthesisParams | undefined): string {
+  if (!options) {
+    return '';
+  }
+  const params: Partial<Record<keyof VoicevoxSynthesisParams, number>> = {};
+  let count = 0;
+  for (const key of SYNTHESIS_PARAM_KEYS) {
+    const value = options[key];
+    if (value === undefined) {
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`expo-voicevox: ${key} must be a finite number`);
+    }
+    params[key] = value;
+    count += 1;
+  }
+  return count === 0 ? '' : JSON.stringify(params);
 }
 
 /** 再生中のオーディオセッションの扱いを解決する。既定は何も触らない `'none'`。 */
@@ -228,7 +271,7 @@ export async function getCharacters(): Promise<VoicevoxCharacter[]> {
 export function tts(
   text: string,
   styleId: number,
-  options?: VoicevoxSynthesisOptions
+  options?: VoicevoxTextSynthesisOptions
 ): Promise<string> {
   assertNonEmptyString(text, 'text');
   assertStyleId(styleId);
@@ -237,7 +280,8 @@ export function tts(
     styleId,
     resolveInterrogativeUpspeak(options),
     resolveOutputDirectory(options),
-    resolveUseCache(options)
+    resolveUseCache(options),
+    resolveSynthesisParams(options)
   );
 }
 
@@ -249,7 +293,7 @@ export function tts(
 export function ttsFromKana(
   kana: string,
   styleId: number,
-  options?: VoicevoxSynthesisOptions
+  options?: VoicevoxTextSynthesisOptions
 ): Promise<string> {
   assertNonEmptyString(kana, 'kana');
   assertStyleId(styleId);
@@ -258,7 +302,8 @@ export function ttsFromKana(
     styleId,
     resolveInterrogativeUpspeak(options),
     resolveOutputDirectory(options),
-    resolveUseCache(options)
+    resolveUseCache(options),
+    resolveSynthesisParams(options)
   );
 }
 
@@ -495,7 +540,7 @@ async function trackedSpeak(call: () => Promise<VoicevoxUtterance>): Promise<Voi
 export function speak(
   text: string,
   styleId: number,
-  options?: VoicevoxSpeakOptions
+  options?: VoicevoxTextSpeakOptions
 ): Promise<VoicevoxUtterance> {
   assertNonEmptyString(text, 'text');
   assertStyleId(styleId);
@@ -507,7 +552,8 @@ export function speak(
       styleId,
       enableInterrogativeUpspeak,
       audioSession,
-      resolveUseCache(options)
+      resolveUseCache(options),
+      resolveSynthesisParams(options)
     )
   );
 }
@@ -516,7 +562,7 @@ export function speak(
 export function speakFromKana(
   kana: string,
   styleId: number,
-  options?: VoicevoxSpeakOptions
+  options?: VoicevoxTextSpeakOptions
 ): Promise<VoicevoxUtterance> {
   assertNonEmptyString(kana, 'kana');
   assertStyleId(styleId);
@@ -528,7 +574,8 @@ export function speakFromKana(
       styleId,
       enableInterrogativeUpspeak,
       audioSession,
-      resolveUseCache(options)
+      resolveUseCache(options),
+      resolveSynthesisParams(options)
     )
   );
 }
@@ -556,6 +603,64 @@ export function speakFromAudioQuery(
       audioSession,
       resolveUseCache(options)
     )
+  );
+}
+
+/**
+ * 鳴らさずに合成だけ済ませ、キャッシュへ入れておく。
+ *
+ * ボタンを押した瞬間に喋り出してほしい画面で、先に温めておくために使う。すでにキャッシュに
+ * あるなら何もしない。合成用の直列キューの上で動くので、他の合成の実行中に呼ぶと待たされる。
+ *
+ * `initialize()` の `synthesisCacheBytes` を `0` にしてキャッシュを切っている場合、この関数は
+ * 合成して捨てるだけになる（呼ぶ意味が無い）。
+ */
+export function precacheSpeech(
+  text: string,
+  styleId: number,
+  options?: VoicevoxPrecacheOptions
+): Promise<void> {
+  assertNonEmptyString(text, 'text');
+  assertStyleId(styleId);
+  return ExpoVoicevoxModule.precacheSpeech(
+    text,
+    styleId,
+    resolveInterrogativeUpspeak(options),
+    resolveSynthesisParams(options)
+  );
+}
+
+/** AquesTalk 風記法のカナを先に合成しておく。挙動は `precacheSpeech()` と同じ。 */
+export function precacheSpeechFromKana(
+  kana: string,
+  styleId: number,
+  options?: VoicevoxPrecacheOptions
+): Promise<void> {
+  assertNonEmptyString(kana, 'kana');
+  assertStyleId(styleId);
+  return ExpoVoicevoxModule.precacheSpeechFromKana(
+    kana,
+    styleId,
+    resolveInterrogativeUpspeak(options),
+    resolveSynthesisParams(options)
+  );
+}
+
+/**
+ * AudioQuery を先に合成しておく。挙動は `precacheSpeech()` と同じ。
+ *
+ * AudioQuery 自体がパラメータを持っているので、`VoicevoxSynthesisParams` は受け取らない。
+ */
+export function precacheSpeechFromAudioQuery(
+  audioQuery: VoicevoxAudioQuery,
+  styleId: number,
+  options?: { enableInterrogativeUpspeak?: boolean }
+): Promise<void> {
+  assertStyleId(styleId);
+  return ExpoVoicevoxModule.precacheSpeechFromAudioQuery(
+    stringifyAudioQuery(audioQuery),
+    styleId,
+    resolveInterrogativeUpspeak(options)
   );
 }
 

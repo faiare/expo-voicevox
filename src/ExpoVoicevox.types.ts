@@ -174,6 +174,32 @@ export type NormalizedVoicevoxUserDictWord = {
  */
 export type VoicevoxOutputDirectory = 'cache' | 'document';
 
+/**
+ * AudioQuery を組み立てずに合成の調子を変えるための上書き。
+ *
+ * 1 つでも指定するとネイティブ側が `createAudioQuery()` 相当を挟んでから合成する。
+ * `createAudioQuery()` は言語解析だけで音響モデルの推論を含まないので、増える時間は数十 ms
+ * のオーダーで済む。**キャッシュのキーにはこの指定も入る**ので、同じ値で呼び続ける限り
+ * 2 回目からは丸ごと省かれる。
+ *
+ * 細かく触りたい（アクセント句を編集する、モーラ単位で音高を変える）場合は、これではなく
+ * `createAudioQuery()` と `synthesis()` / `speakFromAudioQuery()` を使う。
+ */
+export type VoicevoxSynthesisParams = {
+  /** 話速。既定 1.0。 */
+  speedScale?: number;
+  /** 音高。既定 0.0。 */
+  pitchScale?: number;
+  /** 抑揚。既定 1.0。 */
+  intonationScale?: number;
+  /** 音量。既定 1.0。 */
+  volumeScale?: number;
+  /** 開始の無音の長さ（秒）。0 にすると頭出しが速くなる。 */
+  prePhonemeLength?: number;
+  /** 終了の無音の長さ（秒）。 */
+  postPhonemeLength?: number;
+};
+
 /** `tts()` / `synthesis()` / `ttsFromKana()` の合成オプション。 */
 export type VoicevoxSynthesisOptions = {
   /**
@@ -201,6 +227,14 @@ export type VoicevoxSynthesisOptions = {
    */
   cache?: boolean;
 };
+
+/**
+ * `tts()` / `ttsFromKana()` のオプション。
+ *
+ * テキストとカナからの合成は AudioQuery をネイティブ側で作れるので、`synthesis()` と違って
+ * 合成パラメータをここで直接指定できる。
+ */
+export type VoicevoxTextSynthesisOptions = VoicevoxSynthesisOptions & VoicevoxSynthesisParams;
 
 /**
  * 再生のあいだだけオーディオセッション（iOS）/ オーディオフォーカス（Android）をどう扱うか。
@@ -244,6 +278,24 @@ export type VoicevoxSynthesisCacheStats = {
   hits: number;
   misses: number;
 };
+
+/**
+ * `speak()` / `speakFromKana()` のオプション。
+ *
+ * `speakFromAudioQuery()` は AudioQuery 自体がパラメータを持っているので `VoicevoxSpeakOptions`
+ * のままにしてある（ここで重ねられると、どちらが効くのか読めなくなる）。
+ */
+export type VoicevoxTextSpeakOptions = VoicevoxSpeakOptions & VoicevoxSynthesisParams;
+
+/**
+ * `precacheSpeech()` 系のオプション。
+ *
+ * 鳴らさないので `audioSession` は無く、キャッシュに入れるのが目的なので `cache` も無い。
+ */
+export type VoicevoxPrecacheOptions = {
+  /** 疑問文の語尾を自動で上げるか。既定は true。 */
+  enableInterrogativeUpspeak?: boolean;
+} & VoicevoxSynthesisParams;
 
 /** `speak()` が返す発話。 */
 export type VoicevoxUtterance = {

@@ -169,15 +169,20 @@ class VoicevoxWavCacheTest {
 
   @Test
   fun `builds a key that separates the fixed fields from the payload`() {
+    val params = "{\"speedScale\":1.1}"
+
+    assertEquals("text 3 1  こんにちは", VoicevoxWavCache.key("text", 3, true, "", "こんにちは"))
     assertEquals(
-      "text 3 1 こんにちは",
-      VoicevoxWavCache.key("text", 3, true, "こんにちは")
+      "text 3 1 $params こんにちは",
+      VoicevoxWavCache.key("text", 3, true, params, "こんにちは")
     )
-    // 語尾上げの有無・スタイル・種別のどれが違ってもキーは別になる。
-    val base = VoicevoxWavCache.key("text", 3, true, "あ")
-    assertNotEquals(base, VoicevoxWavCache.key("text", 3, false, "あ"))
-    assertNotEquals(base, VoicevoxWavCache.key("text", 4, true, "あ"))
-    assertNotEquals(base, VoicevoxWavCache.key("kana", 3, true, "あ"))
+
+    // 語尾上げの有無・スタイル・種別・合成パラメータのどれが違ってもキーは別になる。
+    val base = VoicevoxWavCache.key("text", 3, true, "", "あ")
+    assertNotEquals(base, VoicevoxWavCache.key("text", 3, false, "", "あ"))
+    assertNotEquals(base, VoicevoxWavCache.key("text", 4, true, "", "あ"))
+    assertNotEquals(base, VoicevoxWavCache.key("kana", 3, true, "", "あ"))
+    assertNotEquals(base, VoicevoxWavCache.key("text", 3, true, params, "あ"))
   }
 
   private fun wav(size: Int): ByteArray = ByteArray(size) { (it % 251).toByte() }

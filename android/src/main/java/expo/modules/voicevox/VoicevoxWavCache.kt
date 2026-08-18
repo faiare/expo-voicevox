@@ -102,14 +102,17 @@ class VoicevoxWavCache(initialLimitBytes: Long = DEFAULT_LIMIT_BYTES) {
      * キャッシュキーを組み立てる。
      *
      * ペイロード（テキスト / カナ / AudioQuery の JSON）は自由形式なので必ず最後に置く。
-     * 前段の固定長フィールドと衝突させないため。書き出し先ディレクトリは合成結果に影響しないので
+     * 前段のフィールドと衝突させないため。[params] は JS が固定順で組み立てた JSON 文字列で、
+     * 空白を含まないのでここで区切りに使える。書き出し先ディレクトリは合成結果に影響しないので
      * キーに含めない。
      */
     fun key(
       kind: String,
       styleId: Int,
       enableInterrogativeUpspeak: Boolean,
+      params: String,
       payload: String
-    ): String = "$kind $styleId ${if (enableInterrogativeUpspeak) 1 else 0} $payload"
+    ): String =
+      "$kind $styleId ${if (enableInterrogativeUpspeak) 1 else 0} $params $payload"
   }
 }
