@@ -58,6 +58,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [speechState, setSpeechState] = useState('');
+  const [directory, setDirectory] = useState<Voicevox.VoicevoxOutputDirectory>('cache');
 
   const player = useAudioPlayer(null);
 
@@ -169,9 +170,10 @@ export default function App() {
         const query = await Voicevox.createAudioQuery(text, styleId);
         play(await Voicevox.synthesis(applyParams(query, params), styleId, {
           enableInterrogativeUpspeak: upspeak,
+          directory,
         }));
       }),
-    [play, params, styleId, text, upspeak, withBusy]
+    [directory, play, params, styleId, text, upspeak, withBusy]
   );
 
   const handleSpeakFromKana = useCallback(
@@ -183,9 +185,10 @@ export default function App() {
         const query = await Voicevox.createAudioQueryFromKana(kana, styleId);
         play(await Voicevox.synthesis(applyParams(query, params), styleId, {
           enableInterrogativeUpspeak: upspeak,
+          directory,
         }));
       }),
-    [kana, params, play, styleId, upspeak, withBusy]
+    [directory, kana, params, play, styleId, upspeak, withBusy]
   );
 
   const handleSpeakOnDemand = useCallback(
@@ -206,9 +209,11 @@ export default function App() {
           return;
         }
         setStatus(`再生中 #${utterance.id}（${utterance.durationMillis}ms）`);
-        // 鳴り終わるまで待つ（待たずに投げっぱなしにしてもよい）。
-        const ended = await Voicevox.waitForSpeech(utterance.id);
-        setStatus(`#${utterance.id} ${ended}`);
+        // 鳴り終わりは busy の外で待つ。speak() が返った時点で UI は操作可能にしておきたい
+        // （待っているあいだも stopSpeaking() を押せるように）。
+        Voicevox.waitForSpeech(utterance.id).then((ended) => {
+          setStatus(`#${utterance.id} ${ended}`);
+        });
       }),
     [styleId, text, upspeak, withBusy]
   );
@@ -336,6 +341,19 @@ export default function App() {
 
           <Text style={styles.label}>テキスト</Text>
           <TextInput style={styles.input} value={text} onChangeText={setText} multiline />
+          <Text style={styles.label}>WAV の書き出し先</Text>
+          <View style={styles.styleList}>
+            <Chip
+              label="cache（既定）"
+              selected={directory === 'cache'}
+              onPress={() => setDirectory('cache')}
+            />
+            <Chip
+              label="document"
+              selected={directory === 'document'}
+              onPress={() => setDirectory('document')}
+            />
+          </View>
           <Button
             title="合成して再生"
             onPress={handleSpeak}
@@ -350,7 +368,8 @@ export default function App() {
             onPress={handleSpeakOnDemand}
             disabled={busy || styleId === null}
           />
-          <Button title="stopSpeaking()" onPress={handleStopSpeaking} disabled={busy} />
+          {/* 再生中は busy になるので、停止だけは busy でも押せるようにしておく。 */}
+          <Button title="stopSpeaking()" onPress={handleStopSpeaking} />
           {speechState ? <Text style={styles.note}>再生状態: {speechState}</Text> : null}
         </Group>
 
