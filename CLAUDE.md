@@ -70,6 +70,37 @@ find example/ios/build/Build/Products/*/*.app/voicevox -maxdepth 1
 
 `swiftc -typecheck` を単体ファイルに掛けるだけでは escaping closure まわりのエラーを取りこぼす。**Swift は必ず `xcodebuild` まで通すこと。**
 
+### シミュレータ / エミュレータでの動作確認
+
+再生のようにネイティブでしか確かめられないものは、実際に example を動かして確認する。
+
+```bash
+# iOS: 起動済みシミュレータへ install して起動（Debug なので Metro が要る）
+xcrun simctl boot <UDID>; xcrun simctl install <UDID> example/ios/build/Build/Products/Debug-iphonesimulator/expovoicevoxexample.app
+xcrun simctl launch <UDID> expo.modules.voicevox.example
+
+# Android: ビルドから install / 起動まで
+cd example && npx expo run:android
+```
+
+UI 操作は iOS が `axe`（`axe describe-ui --udid <UDID>` で座標を取り `axe tap --label`）、
+Android が `adb shell uiautomator dump` + `adb shell input tap`。エージェントで回すときの注意:
+
+- **`until` の無限ループを書かない**。反応しない要素を永久に待ち続ける。必ず回数上限を付ける。
+- **座標はビューポート内に収まっているか確かめる**。iOS の `describe-ui` はスクロール外の要素も
+  返すので、y がビューポート（iPhone 17 Pro なら 874pt）の外なら押しても何も起きない。
+- **スワイプには慣性が付く**。`--duration` を 1.2 秒ほどに伸ばした遅いドラッグだと慣性が付かず、
+  目的の位置に寄せやすい。
+- Android は「Open debugger to view warnings.」のトーストが画面下部に重なる。その下のボタンは
+  タップが吸われるので、先にトーストの ✕ を押すかスクロールして中央に寄せる。
+- **エミュレータや Metro はツールのバックグラウンド実行で起動する**。`nohup ... &` だと
+  ツール呼び出しの終了時にプロセスごと回収されて落ちる（macOS に `setsid` は無い）。
+
+**`Metro が変更を配らないことがある`**。ファイルを直しても、アプリを再起動しても古い JS のまま
+動き続けることがある（`curl localhost:8081/index.bundle?platform=ios&dev=true` で配信中の中身を
+grep すると、Metro 自体が古いコードを持っていると分かる）。**`npx expo start --clear` で
+Metro を起動し直してからアプリを再起動する**のが確実。app の再インストールだけでは直らない。
+
 `src/` を変更したら **`npm run build` を先に実行**すること。`package.json` の `main` は `build/index.js` で、example は build 出力を解決する。
 
 ### CI
