@@ -27,13 +27,16 @@ final class VoicevoxDownloader: NSObject {
   typealias ProgressHandler = (_ bytesWritten: Int64, _ totalBytes: Int64) -> Void
 
   private let progressHandler: ProgressHandler
+  /// 進捗のたびに見て、立っていたらタスクごと取り消す。
+  private let isCancelled: () -> Bool
   private var session: URLSession!
   private var temporaryURL: URL?
   private var failure: Error?
   private let semaphore = DispatchSemaphore(value: 0)
 
-  private init(onProgress: @escaping ProgressHandler) {
+  private init(isCancelled: @escaping () -> Bool, onProgress: @escaping ProgressHandler) {
     self.progressHandler = onProgress
+    self.isCancelled = isCancelled
     super.init()
     let queue = OperationQueue()
     queue.maxConcurrentOperationCount = 1
@@ -46,15 +49,20 @@ final class VoicevoxDownloader: NSObject {
     to destination: URL,
     expectedSize: Int?,
     expectedSha256: String?,
+    isCancelled: @escaping () -> Bool = { false },
     onProgress: @escaping ProgressHandler
   ) throws {
-    let downloader = VoicevoxDownloader(onProgress: onProgress)
+    let downloader = VoicevoxDownloader(isCancelled: isCancelled, onProgress: onProgress)
     defer { downloader.session.invalidateAndCancel() }
 
     let task = downloader.session.downloadTask(with: url)
     task.resume()
     downloader.semaphore.wait()
 
+    // 取り消しは URLSession から「失敗」として返ってくる。理由を取り違えないよう先に見る。
+    if isCancelled() {
+      throw VoicevoxCancelledException()
+    }
     if let failure = downloader.failure {
       throw failure
     }
@@ -130,6 +138,11 @@ extension VoicevoxDownloader: URLSessionDownloadDelegate {
     totalBytesWritten: Int64,
     totalBytesExpectedToWrite: Int64
   ) {
+    // 173MB を 1 本で落とすので、ここで見ないと中断が効かない。
+    if isCancelled() {
+      downloadTask.cancel()
+      return
+    }
     progressHandler(totalBytesWritten, max(totalBytesExpectedToWrite, 0))
   }
 

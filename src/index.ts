@@ -6,6 +6,7 @@ import type {
   NormalizedVoicevoxUserDictWord,
   VoicevoxAccentPhrase,
   VoicevoxAssetPaths,
+  VoicevoxAssetStatus,
   VoicevoxAudioQuery,
   VoicevoxAudioSessionMode,
   VoicevoxCharacter,
@@ -165,6 +166,46 @@ export function isInitialized(): boolean {
  */
 export function prepareAssets(): Promise<VoicevoxAssetPaths> {
   return ExpoVoicevoxModule.prepareAssets();
+}
+
+/**
+ * アセットの状態を、取得も展開も始めずに読む。
+ *
+ * 「初回起動で 173MB 落とすことになるのか」を `prepareAssets()` を呼ぶ前に知り、確認の画面を
+ * 出すかどうかを決めるために使う。準備の実行中でも待たされず、そのあいだは `ready` が false。
+ *
+ * ```ts
+ * const status = await Voicevox.getAssetStatus();
+ * if (!status.ready && status.assetSource === 'download') {
+ *   // status.downloadBytes を見せて確認を取る
+ * }
+ * ```
+ */
+export function getAssetStatus(): Promise<VoicevoxAssetStatus> {
+  return ExpoVoicevoxModule.getAssetStatus();
+}
+
+/**
+ * 進行中の `prepareAssets()` を中断させる。走っていなければ何もしない。
+ *
+ * 中断されると `prepareAssets()`（および内部で呼んでいる `initialize()`）は reject する。
+ * その理由かどうかは `isPrepareAssetsCancelled()` で見分ける。中途半端に展開されたものは
+ * 残らないので、そのまま `prepareAssets()` を呼び直せる（最初からやり直しになる）。
+ */
+export function cancelPrepareAssets(): Promise<void> {
+  return ExpoVoicevoxModule.cancelPrepareAssets();
+}
+
+/** `cancelPrepareAssets()` による中断かどうか。ネイティブ 2 実装と同じ文言を見ている。 */
+const PREPARE_CANCELLED_REASON = 'the asset preparation was cancelled';
+
+/**
+ * `prepareAssets()` / `initialize()` の reject が `cancelPrepareAssets()` によるものかを返す。
+ *
+ * 中断は「失敗」ではないので、通信エラーと同じ扱いでエラー表示を出さないための判定に使う。
+ */
+export function isPrepareAssetsCancelled(error: unknown): boolean {
+  return error instanceof Error && error.message.includes(PREPARE_CANCELLED_REASON);
 }
 
 /**

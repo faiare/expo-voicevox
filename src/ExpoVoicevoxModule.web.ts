@@ -15,6 +15,19 @@ class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   async prepareAssets(): Promise<never> {
     throw new Error(UNSUPPORTED);
   }
+  async getAssetStatus(): Promise<{
+    configured: boolean;
+    ready: boolean;
+    assetSource: 'bundle';
+    downloadBytes: number;
+  }> {
+    // web は対象外なので「設定されていない」を返す。throw しないのは、この API 自体が
+    // 「使える状態かを確かめる」ためのものだから。
+    return { configured: false, ready: false, assetSource: 'bundle', downloadBytes: 0 };
+  }
+  async cancelPrepareAssets(): Promise<void> {
+    // 何も準備していないので何もしない。
+  }
   async initialize(): Promise<void> {
     throw new Error(UNSUPPORTED);
   }

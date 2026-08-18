@@ -2,6 +2,7 @@ import { NativeModule, requireNativeModule } from 'expo';
 
 import type {
   ExpoVoicevoxModuleEvents,
+  VoicevoxAssetStatus,
   NormalizedVoicevoxInitializeOptions,
   NormalizedVoicevoxUserDictWord,
   VoicevoxAssetPaths,
@@ -21,6 +22,10 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
    * iOS の bundle モードではアプリのバンドルをそのまま読むので即座に返る。冪等。
    */
   prepareAssets(): Promise<VoicevoxAssetPaths>;
+  /** 取得も展開も始めずに読める範囲のアセットの状態を返す。 */
+  getAssetStatus(): Promise<VoicevoxAssetStatus>;
+  /** 進行中の `prepareAssets()` を中断させる。走っていなければ何もしない。 */
+  cancelPrepareAssets(): Promise<void>;
   /** ONNX Runtime・OpenJTalk・Synthesizer を用意し、音声モデルを読み込む。 */
   initialize(options: NormalizedVoicevoxInitializeOptions): Promise<void>;
   /**

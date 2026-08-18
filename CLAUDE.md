@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `src/ExpoVoicevoxModule.web.ts` はテンプレート由来の web スタブ。web はサポート対象外なので、API 追加時に web 実装を作り込む必要はない（バンドラの解決を壊さないためにファイル自体は残す）。
 - 音声合成 API は実装済み。基本（`getVersion` / `isInitialized` / `prepareAssets` / `initialize` / `getCharacters` / `tts` / `finalize`）に加え、AudioQuery 一式（`createAudioQuery` / `createAudioQueryFromKana` / `synthesis` / `ttsFromKana`）、アクセント句編集（`createAccentPhrases` 系 / `replaceMoraData` / `replacePhonemeLength` / `replaceMoraPitch` / `audioQueryFromAccentPhrases`）、ユーザー辞書（`setUserDictWords` / `loadUserDictFile` / `saveUserDictFile`）が揃っている。アセットの取得と配置は `plugin/` の config plugin が担う。
 - メモリ上の WAV をそのまま鳴らす `speak` 系（`speak` / `speakFromKana` / `speakFromAudioQuery` / `stopSpeaking` / `isSpeaking` / `waitForSpeech`）もある。再生制御は停止までで、pause / resume / volume と文分割の逐次再生は入れていない（1 発話 = 1 合成 = 1 再生）。
+- アセットは `getAssetStatus()` で「使える状態か / 何 MB 取りに行くか」を副作用なしに問い合わせられ、`cancelPrepareAssets()` で進行中の準備を中断できる（中断かどうかは `isPrepareAssetsCancelled()` で見分ける）。
 - 合成結果はネイティブ側の LRU キャッシュに載るので、同じ入力の 2 回目は推論をやり直さない（`clearSynthesisCache` / `getSynthesisCacheStats`、`initialize` の `synthesisCacheBytes`、各呼び出しの `cache: false`）。鳴らさず温めるだけの `precacheSpeech` 系もある。
 - `speak` / `tts` 系は `speedScale` / `prePhonemeLength` などの合成パラメータを直接受ける（AudioQuery を組み立てずに話速と頭出しを変えられる）。
 - **未対応**は歌唱合成（SING）とモデルの実行時アンロードのみ。ストリーミング合成は voicevox_core 0.17.0 自体に API が無い（C ヘッダに `stream` の出現が 0 件）ので「未対応」ではなく「上流に無い」。
@@ -224,6 +225,27 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
   揃えるため自前で書いてある**ので、追い出しの規則を変えるときは両方を直すこと。
 - **`ios/` に Swift ファイルを足したら `pod install` が要る**。podspec の glob は pod install 時に
   展開されるので、回さないと `cannot find 'VoicevoxWavCache' in scope` でビルドが落ちる。
+
+### アセットの状態取得と中断
+
+`getAssetStatus()` は取得も展開も始めずに読める範囲だけを返し、`cancelPrepareAssets()` は
+進行中の `prepareAssets()` を中断する。
+
+- **どちらも直列化の外に置く**。iOS は `.runOnQueue(engineQueue)` を付けず、Android は
+  `synchronized(engineLock)` を取らない。取ると準備の完了まで戻らず、中断そのものができない。
+  同じ理由で `VoicevoxAssets` 側も `lock`（準備用）と `stateLock` / `AtomicBoolean`（中断フラグと
+  `cached` の読み）を分けてある。
+- **中断フラグは `prepare()` の入口で下ろす**。下ろさないと、一度中断したあと二度と準備できなくなる。
+- **チェックはバッファ / チャンク単位で入れる**。ファイル単位だと 0.vvm 1 つで数秒待たされる
+  （`copyCancellable` / `VoicevoxDownloader` の読み取りループ / `inflate` のチャンクループ）。
+- **中断は「失敗」と区別できる必要がある**。`VoicevoxCancelledException` の文言
+  `the asset preparation was cancelled` を iOS・Android・JS の `isPrepareAssetsCancelled()` の
+  3 箇所が共有している。変えるときは 3 つとも直すこと。iOS の `prepareAssets()` ラッパは
+  この例外だけ包み直さずに投げ直す（包むと文言が変わる）。
+- **中断したら staging を消す**。iOS の `downloadAssets` は元々後始末していなかったので
+  `downloadEntries` に切り出して do/catch で消すようにした（Android の `materialize` は元からこの形）。
+- エミュレータでは bundle モードの展開が 250ms 程度で終わるので、**UI 操作で中断の瞬間を捉えるのは
+  現実的でない**。中断そのものは `VoicevoxArchiveTest` の JVM テストで検証する。
 
 ### 合成パラメータの直接指定（speedScale など）
 

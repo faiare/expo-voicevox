@@ -416,6 +416,40 @@ useEffect(() => {
 }, []);
 ```
 
+### Checking and cancelling asset preparation
+
+`getAssetStatus()` answers "is this ready, and if not, how much will it fetch?" without starting
+any download or extraction. It never blocks — call it while preparation is running and you get
+`ready: false` right away.
+
+```ts
+const status = await Voicevox.getAssetStatus();
+if (!status.configured) {
+  // the config plugin is not set up, or you have to pass paths to initialize() yourself
+} else if (!status.ready && status.assetSource === 'download') {
+  // ask before spending status.downloadBytes on mobile data
+}
+```
+
+`cancelPrepareAssets()` stops a preparation that is already running. The pending `prepareAssets()`
+(or the `initialize()` that triggered it) rejects; use `isPrepareAssetsCancelled()` so a
+deliberate cancellation isn't reported as a failure:
+
+```ts
+try {
+  await Voicevox.prepareAssets();
+} catch (error) {
+  if (!Voicevox.isPrepareAssetsCancelled(error)) throw error;
+}
+```
+
+Nothing half-extracted is left behind — the work happens in a staging directory that is removed on
+cancellation — so calling `prepareAssets()` again simply starts over. Cancelling when nothing is
+running is a no-op, and it does not affect the next `prepareAssets()`.
+
+`assetSource: "bundle"` on iOS reads the app bundle in place, so preparation is instantaneous and
+there is nothing to cancel.
+
 ### Managing assets yourself
 
 Passing absolute paths to `initialize()` bypasses the config plugin entirely — nothing is downloaded
@@ -439,6 +473,9 @@ dictionary.
 | `getVersion()` | sync | voicevox_core version |
 | `isInitialized()` | sync | Whether `initialize()` has completed |
 | `prepareAssets()` | async | Makes assets available and returns their absolute paths. Idempotent |
+| `getAssetStatus()` | async | Whether the assets are ready, and how much a download would fetch. Starts nothing |
+| `cancelPrepareAssets()` | async | Stops a running `prepareAssets()`. No-op when nothing is running |
+| `isPrepareAssetsCancelled(error)` | sync | Whether a rejection came from `cancelPrepareAssets()` |
 | `addPrepareProgressListener(cb)` | sync | Subscribes to asset preparation progress |
 | `initialize(options?)` | async | Sets up ONNX Runtime, OpenJTalk and the synthesizer, and loads the voice models |
 | `getCharacters()` | async | Characters and styles in the loaded models |

@@ -6,6 +6,26 @@ struct VoicevoxAssetPaths {
   let voiceModelPaths: [String]
 }
 
+/// `prepareAssets()` を走らせずに読める範囲のアセットの状態。
+///
+/// 「もう使える状態か」「使えないなら何 MB 取りに行くことになるか」を、取得も展開も始めずに
+/// 知るための口。
+struct VoicevoxAssetStatus {
+  let configured: Bool
+  let ready: Bool
+  let assetSource: String
+  let downloadBytes: Int64
+
+  var dictionary: [String: Any] {
+    [
+      "configured": configured,
+      "ready": ready,
+      "assetSource": assetSource,
+      "downloadBytes": downloadBytes,
+    ]
+  }
+}
+
 /// アセットの準備中に JS へ流す進捗。
 struct VoicevoxPrepareProgress {
   let stage: String  // "download" | "extract"
@@ -88,6 +108,76 @@ final class VoicevoxAssets {
   private let lock = NSLock()
   private var cached: VoicevoxAssetPaths?
 
+  /// 中断の要求と、`status()` が読む `cached` を守る。
+  ///
+  /// `lock` とは別にするのが要点で、`cancel()` や `status()` が `lock` を取ると
+  /// 準備が終わるまで戻らず、中断そのものができなくなる。
+  private let stateLock = NSLock()
+  private var cancelled = false
+  private var readyPaths: VoicevoxAssetPaths?
+
+  /// 進行中の `prepare` を中断させる。走っていなければ何もしない。
+  ///
+  /// 次の `prepare` は入口でこのフラグを下ろすので、中断したあとでもやり直せる。
+  func cancel() {
+    stateLock.withLock { cancelled = true }
+  }
+
+  private var isCancelled: Bool {
+    stateLock.withLock { cancelled }
+  }
+
+  private func throwIfCancelled() throws {
+    if isCancelled {
+      throw VoicevoxCancelledException()
+    }
+  }
+
+  /// 取得も展開も始めずに読める範囲の状態を返す。
+  ///
+  /// `lock` を取らないので、準備の実行中でも即座に返る（そのあいだは `ready = false`）。
+  func status() -> VoicevoxAssetStatus {
+    guard
+      let bundleDirectory = bundleResourceDirectory(),
+      let manifest = try? readManifest(in: bundleDirectory)
+    else {
+      // マニフェストが無い = config plugin が入っていない。エラーにはしない
+      // （「まだ設定していない」を知るための API なので）。
+      return VoicevoxAssetStatus(
+        configured: false, ready: false, assetSource: "bundle", downloadBytes: 0)
+    }
+    let downloadBytes = manifest.downloads.reduce(Int64(0)) { $0 + Int64($1.size ?? 0) }
+    guard manifest.manifestVersion == 1 else {
+      return VoicevoxAssetStatus(
+        configured: true, ready: false, assetSource: manifest.assetSource,
+        downloadBytes: downloadBytes)
+    }
+
+    if stateLock.withLock({ readyPaths }) != nil {
+      return VoicevoxAssetStatus(
+        configured: true, ready: true, assetSource: manifest.assetSource,
+        downloadBytes: downloadBytes)
+    }
+
+    let ready: Bool
+    if manifest.assetSource == "download" {
+      // bundle と違い、初回は取得も展開もしていない。完了マーカーの有無で見る。
+      if let directory = try? downloadDirectory(revision: manifest.revision),
+        FileManager.default.fileExists(
+          atPath: directory.appendingPathComponent(Self.completeMarkerName).path) {
+        ready = (try? resolvePaths(manifest: manifest, root: directory)) != nil
+      } else {
+        ready = false
+      }
+    } else {
+      // bundle モードは .app の中をそのまま読むので、揃っていれば常に使える。
+      ready = (try? resolvePaths(manifest: manifest, root: bundleDirectory)) != nil
+    }
+    return VoicevoxAssetStatus(
+      configured: true, ready: ready, assetSource: manifest.assetSource,
+      downloadBytes: downloadBytes)
+  }
+
   /// アセットを使える状態にして絶対パスを返す。2 回目以降は何もしない。
   func prepare(onProgress: @escaping (VoicevoxPrepareProgress) -> Void) throws -> VoicevoxAssetPaths {
     lock.lock()
@@ -96,6 +186,8 @@ final class VoicevoxAssets {
     if let cached {
       return cached
     }
+    // 前回の中断を引きずらない。
+    stateLock.withLock { cancelled = false }
 
     guard let bundleDirectory = bundleResourceDirectory() else {
       throw AssetError.manifestMissing
@@ -112,6 +204,7 @@ final class VoicevoxAssets {
 
     let paths = try resolvePaths(manifest: manifest, root: root)
     cached = paths
+    stateLock.withLock { readyPaths = paths }
     return paths
   }
 
@@ -190,8 +283,36 @@ final class VoicevoxAssets {
     try? FileManager.default.removeItem(at: staging)
     try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
 
+    // 中断や失敗で 100MB 級の残骸を置き去りにしない。次回は作り直しから始める。
+    do {
+      try downloadEntries(manifest, into: staging, onProgress: onProgress)
+    } catch {
+      try? FileManager.default.removeItem(at: staging)
+      throw error
+    }
+
+    FileManager.default.createFile(
+      atPath: staging.appendingPathComponent(Self.completeMarkerName).path, contents: nil)
+
+    try? FileManager.default.removeItem(at: directory)
+    try FileManager.default.moveItem(at: staging, to: directory)
+    try excludeFromBackup(directory)
+
+    onProgress(
+      VoicevoxPrepareProgress(
+        stage: "extract", current: "", completedBytes: 0, totalBytes: 0,
+        completedFiles: manifest.downloads.count, totalFiles: manifest.downloads.count))
+    return directory
+  }
+
+  private func downloadEntries(
+    _ manifest: VoicevoxManifest,
+    into staging: URL,
+    onProgress: @escaping (VoicevoxPrepareProgress) -> Void
+  ) throws {
     let total = manifest.downloads.count
     for (index, entry) in manifest.downloads.enumerated() {
+      try throwIfCancelled()
       guard let url = URL(string: entry.url) else {
         throw VoicevoxDownloader.DownloadError.failed(url: entry.url, reason: "invalid URL")
       }
@@ -201,7 +322,8 @@ final class VoicevoxAssets {
         url: url,
         to: temporary,
         expectedSize: entry.size,
-        expectedSha256: entry.sha256
+        expectedSha256: entry.sha256,
+        isCancelled: { [weak self] in self?.isCancelled ?? false }
       ) { written, expected in
         onProgress(
           VoicevoxPrepareProgress(
@@ -216,26 +338,15 @@ final class VoicevoxAssets {
             stage: "extract", current: entry.name,
             completedBytes: 0, totalBytes: 0,
             completedFiles: index, totalFiles: total))
-        try VoicevoxArchive.extractTarGz(source: temporary, destination: staging)
+        try VoicevoxArchive.extractTarGz(
+          source: temporary, destination: staging,
+          isCancelled: { [weak self] in self?.isCancelled ?? false })
         try FileManager.default.removeItem(at: temporary)
       } else {
         try FileManager.default.moveItem(
           at: temporary, to: staging.appendingPathComponent(entry.name))
       }
     }
-
-    FileManager.default.createFile(
-      atPath: staging.appendingPathComponent(Self.completeMarkerName).path, contents: nil)
-
-    try? FileManager.default.removeItem(at: directory)
-    try FileManager.default.moveItem(at: staging, to: directory)
-    try excludeFromBackup(directory)
-
-    onProgress(
-      VoicevoxPrepareProgress(
-        stage: "extract", current: "", completedBytes: 0, totalBytes: 0,
-        completedFiles: total, totalFiles: total))
-    return directory
   }
 
   private func removeOtherRevisions(keeping revision: String, in parent: URL) {

@@ -46,6 +46,16 @@ final class VoicevoxException: GenericException<String> {
   }
 }
 
+/// `cancelPrepareAssets()` で中断されたときに `prepareAssets()` が投げる例外。
+///
+/// メッセージの文言は JS の `isPrepareAssetsCancelled()` と Android 側の
+/// `VoicevoxCancelledException` が一致していることに依存している。変えるときは 3 箇所とも直すこと。
+final class VoicevoxCancelledException: Exception {
+  override var reason: String {
+    "the asset preparation was cancelled"
+  }
+}
+
 public class ExpoVoicevoxModule: Module {
   private let engine = VoicevoxEngine()
 
@@ -103,6 +113,17 @@ public class ExpoVoicevoxModule: Module {
       ]
     }
     .runOnQueue(engineQueue)
+
+    // 取得も展開も始めずに読むだけなので engineQueue には載せない
+    // （準備の実行中でも「まだ ready でない」と即座に返せる）。
+    AsyncFunction("getAssetStatus") { () -> [String: Any] in
+      VoicevoxAssets.shared.status().dictionary
+    }
+
+    // 準備の実行中に呼ばれる API なので、engineQueue に載せてはいけない（載せると自分が待たされる）。
+    AsyncFunction("cancelPrepareAssets") {
+      VoicevoxAssets.shared.cancel()
+    }
 
     AsyncFunction("initialize") { (options: VoicevoxInitializeOptions) in
       guard let cpuNumThreads = UInt16(exactly: options.cpuNumThreads) else {
@@ -637,6 +658,9 @@ public class ExpoVoicevoxModule: Module {
       return try VoicevoxAssets.shared.prepare { progress in
         self.sendEvent("onPrepareProgress", progress.dictionary)
       }
+    } catch let error as VoicevoxCancelledException {
+      // 包み直すと文言が変わり、JS の isPrepareAssetsCancelled() が見分けられなくなる。
+      throw error
     } catch {
       throw VoicevoxException(error.localizedDescription)
     }

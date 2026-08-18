@@ -47,6 +47,15 @@ class VoicevoxUserDictWordRecord : Record {
 /** voicevox-core 由来のエラーを JS へ伝えるための例外。 */
 class VoicevoxException(message: String, cause: Throwable? = null) : CodedException(message, cause)
 
+/**
+ * `cancelPrepareAssets()` で中断されたときに `prepareAssets()` が投げる例外。
+ *
+ * メッセージの文言は JS の `isPrepareAssetsCancelled()` と iOS 側の
+ * `VoicevoxCancelledException` が一致していることに依存している。変えるときは 3 箇所とも直すこと。
+ */
+class VoicevoxCancelledException :
+  CodedException("the asset preparation was cancelled", null)
+
 class ExpoVoicevoxModule : Module() {
   private val engine = VoicevoxEngine()
 
@@ -56,8 +65,16 @@ class ExpoVoicevoxModule : Module() {
   /** 合成結果の LRU キャッシュ。[engineLock] の内側でだけ触るので、自前のロックは持たない。 */
   private val wavCache = VoicevoxWavCache()
 
-  /** config plugin が配置したアセットの解決役。reactContext が要るので遅延生成する。 */
-  private var assets: VoicevoxAssets? = null
+  /**
+   * config plugin が配置したアセットの解決役。reactContext が要るので遅延生成する。
+   *
+   * `getAssetStatus` / `cancelPrepareAssets` が engineLock を取らずに触るので `@Volatile`。
+   * 生成は [assetsInitLock] で守る（engineLock を使うと準備の完了まで待たされ、
+   * 中断そのものができなくなる）。
+   */
+  @Volatile private var assets: VoicevoxAssets? = null
+
+  private val assetsInitLock = Any()
 
   /**
    * 再生役。reactContext が要るので assets と同じく遅延生成する。
@@ -99,6 +116,13 @@ class ExpoVoicevoxModule : Module() {
         )
       }
     }
+
+    // 取得も展開も始めずに読むだけなので engineLock は取らない
+    // （準備の実行中でも「まだ ready でない」と即座に返せる）。
+    AsyncFunction("getAssetStatus") { requireAssets().status().toResultMap() }
+
+    // 準備の実行中に呼ばれる API なので、engineLock を取ってはいけない（取ると自分が待たされる）。
+    AsyncFunction("cancelPrepareAssets") { assets?.cancel() }
 
     AsyncFunction("initialize") { options: VoicevoxInitializeOptions ->
       synchronized(engineLock) {
@@ -479,15 +503,27 @@ class ExpoVoicevoxModule : Module() {
   }
 
   /** config plugin が配置したアセットを使える状態にする。進捗は JS へイベントで流す。 */
-  private fun prepareAssets(): VoicevoxAssetPaths {
-    val context =
-      appContext.reactContext
-        ?: throw VoicevoxException("the Android context is not available yet")
-    val resolver = assets ?: VoicevoxAssets(context).also { assets = it }
-    return runWrappingErrors("failed to prepare the voicevox assets") {
-      resolver.prepare { progress -> sendEvent("onPrepareProgress", progress.toEventMap()) }
+  private fun prepareAssets(): VoicevoxAssetPaths =
+    runWrappingErrors("failed to prepare the voicevox assets") {
+      requireAssets().prepare { progress -> sendEvent("onPrepareProgress", progress.toEventMap()) }
     }
-  }
+
+  /**
+   * アセットの解決役を用意する。reactContext が要るので遅延生成する。
+   *
+   * AsyncFunction は同時に走りうるので、二重生成しないようロックの中で作る。取り逃すと
+   * `cancelPrepareAssets` が別のインスタンスへ中断を伝えてしまい、何も止まらない。
+   */
+  private fun requireAssets(): VoicevoxAssets =
+    synchronized(assetsInitLock) {
+      assets?.let {
+        return it
+      }
+      val context =
+        appContext.reactContext
+          ?: throw VoicevoxException("the Android context is not available yet")
+      VoicevoxAssets(context).also { assets = it }
+    }
 
   /**
    * voicevox-core の型付き例外をそのまま JS へ流すと種類が多すぎるので、

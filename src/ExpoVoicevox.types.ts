@@ -67,6 +67,32 @@ export type VoicevoxPrepareProgress = {
   totalFiles: number;
 };
 
+/**
+ * `getAssetStatus()` が返す、アセットの状態。
+ *
+ * 取得も展開も始めずに読めるものだけを返す。準備の実行中に呼んでも待たされず、そのあいだは
+ * `ready` が false になる。
+ */
+export type VoicevoxAssetStatus = {
+  /**
+   * config plugin が入っているか。
+   *
+   * false なら `app.json` の `plugins` に `@faiare/expo-voicevox` を足して
+   * `npx expo prebuild` を実行するか、`initialize()` へ絶対パスを渡す必要がある。
+   */
+  configured: boolean;
+  /** すぐ使える状態か。true なら `prepareAssets()` は即座に返る。 */
+  ready: boolean;
+  /** config plugin の `assetSource`。 */
+  assetSource: 'bundle' | 'download';
+  /**
+   * `assetSource: 'download'` のとき、`prepareAssets()` が取得する総バイト数。
+   *
+   * `bundle` では 0（アプリに同梱されているので取得は発生しない）。
+   */
+  downloadBytes: number;
+};
+
 export type ExpoVoicevoxModuleEvents = {
   onPrepareProgress: (progress: VoicevoxPrepareProgress) => void;
   onSpeechStateChange: (change: VoicevoxSpeechStateChange) => void;

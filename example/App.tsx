@@ -126,11 +126,41 @@ export default function App() {
   const handlePrepareAssets = useCallback(
     () =>
       withBusy('アセットを準備しています…', async () => {
-        const paths = await Voicevox.prepareAssets();
-        setStatus(`辞書: ${paths.openJtalkDictDir}\nモデル: ${paths.voiceModelPaths.join(', ')}`);
+        const started = Date.now();
+        try {
+          const paths = await Voicevox.prepareAssets();
+          setStatus(
+            `${Date.now() - started}ms\n辞書: ${paths.openJtalkDictDir}\n` +
+              `モデル: ${paths.voiceModelPaths.join(', ')}`
+          );
+        } catch (e) {
+          // 中断は失敗ではないので、通信エラーと同じ扱いにしない。
+          if (!Voicevox.isPrepareAssetsCancelled(e)) {
+            throw e;
+          }
+          setStatus(`アセットの準備を中断しました（${Date.now() - started}ms）`);
+        }
       }),
     [withBusy]
   );
+
+  const handleAssetStatus = useCallback(
+    () =>
+      withBusy('アセットの状態を読んでいます…', async () => {
+        const status = await Voicevox.getAssetStatus();
+        setStatus(
+          `configured: ${status.configured} / ready: ${status.ready} / ` +
+            `assetSource: ${status.assetSource} / ` +
+            `downloadBytes: ${Math.round(status.downloadBytes / 1024 / 1024)}MB`
+        );
+      }),
+    [withBusy]
+  );
+
+  // 準備の実行中に押せる必要があるので、busy でも disabled にしない。
+  const handleCancelPrepare = useCallback(() => {
+    Voicevox.cancelPrepareAssets();
+  }, []);
 
   const handleInitialize = useCallback(
     () =>
@@ -406,7 +436,10 @@ export default function App() {
             音声モデルと OpenJTalk 辞書は app.json の expo-voicevox plugin が prebuild
             時に埋め込んでいます。Android は初回のみ端末への展開が走ります。
           </Text>
+          <Button title="getAssetStatus()" onPress={handleAssetStatus} disabled={busy} />
           <Button title="prepareAssets()" onPress={handlePrepareAssets} disabled={busy} />
+          {/* 準備中に押すためのボタンなので busy では止めない。 */}
+          <Button title="cancelPrepareAssets()" onPress={handleCancelPrepare} />
           <Button title="initialize()" onPress={handleInitialize} disabled={busy} />
           <Button
             title="finalize()"

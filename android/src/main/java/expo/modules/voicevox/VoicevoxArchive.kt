@@ -15,12 +15,22 @@ object VoicevoxArchive {
   private const val BLOCK_SIZE = 512
   private const val BUFFER_SIZE = 1 shl 16
 
-  /** [source] の tar.gz を [destination] 直下へ展開する。 */
-  fun extractTarGz(source: File, destination: File) {
-    GZIPInputStream(source.inputStream().buffered(BUFFER_SIZE)).use { extractTar(it, destination) }
+  /**
+   * [source] の tar.gz を [destination] 直下へ展開する。
+   *
+   * [isCancelled] はエントリごとに見る。辞書は 1 ファイルが小さいので、これで十分細かい。
+   */
+  fun extractTarGz(source: File, destination: File, isCancelled: () -> Boolean = { false }) {
+    GZIPInputStream(source.inputStream().buffered(BUFFER_SIZE)).use {
+      extractTar(it, destination, isCancelled)
+    }
   }
 
-  fun extractTar(input: InputStream, destination: File) {
+  fun extractTar(
+    input: InputStream,
+    destination: File,
+    isCancelled: () -> Boolean = { false }
+  ) {
     if (!destination.exists() && !destination.mkdirs()) {
       throw IOException("could not create ${destination.absolutePath}")
     }
@@ -30,6 +40,9 @@ object VoicevoxArchive {
     var emptyBlocks = 0
 
     while (true) {
+      if (isCancelled()) {
+        throw VoicevoxCancelledException()
+      }
       if (!input.readFully(header)) {
         // 終端ブロックが欠けている tar もあるので正常終了として扱う。
         return

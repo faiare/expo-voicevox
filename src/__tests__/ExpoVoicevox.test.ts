@@ -4,17 +4,20 @@ import {
   addPrepareProgressListener,
   addSpeechStateChangeListener,
   audioQueryFromAccentPhrases,
+  cancelPrepareAssets,
   clearSynthesisCache,
   createAccentPhrases,
   createAccentPhrasesFromKana,
   createAudioQuery,
   createAudioQueryFromKana,
   finalize,
+  getAssetStatus,
   getCharacters,
   getSynthesisCacheStats,
   getVersion,
   initialize,
   isInitialized,
+  isPrepareAssetsCancelled,
   isSpeaking,
   loadUserDictFile,
   precacheSpeech,
@@ -42,6 +45,8 @@ jest.mock('../ExpoVoicevoxModule', () => ({
     getVersion: jest.fn(),
     isInitialized: jest.fn(),
     prepareAssets: jest.fn(),
+    getAssetStatus: jest.fn(),
+    cancelPrepareAssets: jest.fn(),
     initialize: jest.fn(),
     getMetasJson: jest.fn(),
     tts: jest.fn(),
@@ -1001,5 +1006,40 @@ describe('precacheSpeech', () => {
   it('text が空ならネイティブを呼ばずに throw する', () => {
     expect(() => precacheSpeech('', 3)).toThrow('text');
     expect(nativeModule.precacheSpeech).not.toHaveBeenCalled();
+  });
+});
+
+describe('アセットの状態と中断', () => {
+  it('getAssetStatus はネイティブの返り値をそのまま返す', async () => {
+    const status = {
+      configured: true,
+      ready: false,
+      assetSource: 'download' as const,
+      downloadBytes: 181_000_000,
+    };
+    nativeModule.getAssetStatus.mockResolvedValue(status);
+
+    await expect(getAssetStatus()).resolves.toBe(status);
+  });
+
+  it('cancelPrepareAssets はネイティブへそのまま委譲する', async () => {
+    nativeModule.cancelPrepareAssets.mockResolvedValue(undefined);
+
+    await cancelPrepareAssets();
+
+    expect(nativeModule.cancelPrepareAssets).toHaveBeenCalledTimes(1);
+  });
+
+  it('中断のエラーだけを isPrepareAssetsCancelled が拾う', () => {
+    // ネイティブ 2 実装が投げる文言。ここが食い違うと中断を通信エラーと区別できなくなる。
+    expect(isPrepareAssetsCancelled(new Error('the asset preparation was cancelled'))).toBe(true);
+    expect(
+      isPrepareAssetsCancelled(
+        new Error('failed to prepare the voicevox assets: the asset preparation was cancelled')
+      )
+    ).toBe(true);
+    expect(isPrepareAssetsCancelled(new Error('failed to download: HTTP 503'))).toBe(false);
+    expect(isPrepareAssetsCancelled('the asset preparation was cancelled')).toBe(false);
+    expect(isPrepareAssetsCancelled(undefined)).toBe(false);
   });
 });
