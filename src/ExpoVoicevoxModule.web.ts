@@ -81,6 +81,12 @@ class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   async finalize(): Promise<void> {
     // 何も確保していないので何もしない。
   }
+  async clearSynthesisCache(): Promise<void> {
+    // 何も合成していないので何もしない。
+  }
+  async getSynthesisCacheStats(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
 }
 
 export default registerWebModule(ExpoVoicevoxModule, 'ExpoVoicevoxModule');

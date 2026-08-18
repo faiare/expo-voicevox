@@ -227,6 +227,54 @@ export default function App() {
     [withBusy]
   );
 
+  // キャッシュが効いているかは合成にかかる時間でしか分からないので、同じ入力を 2 回続けて測る。
+  const handleMeasureCache = useCallback(
+    () =>
+      withBusy('キャッシュの効きを測っています…', async () => {
+        if (styleId === null) {
+          throw new Error('スタイルを選んでください');
+        }
+        await Voicevox.clearSynthesisCache();
+
+        const coldStart = Date.now();
+        await Voicevox.tts(text, styleId, { enableInterrogativeUpspeak: upspeak });
+        const cold = Date.now() - coldStart;
+
+        const warmStart = Date.now();
+        await Voicevox.tts(text, styleId, { enableInterrogativeUpspeak: upspeak });
+        const warm = Date.now() - warmStart;
+
+        const stats = await Voicevox.getSynthesisCacheStats();
+        setStatus(
+          `1 回目 ${cold}ms / 2 回目 ${warm}ms（hits ${stats.hits} / misses ${stats.misses} / ` +
+            `${stats.entryCount} 件 ${Math.round(stats.bytes / 1024)}KB）`
+        );
+      }),
+    [styleId, text, upspeak, withBusy]
+  );
+
+  const handleCacheStats = useCallback(
+    () =>
+      withBusy('キャッシュの状態を読んでいます…', async () => {
+        const stats = await Voicevox.getSynthesisCacheStats();
+        setStatus(
+          `${stats.entryCount} 件 / ${Math.round(stats.bytes / 1024)}KB ` +
+            `（上限 ${Math.round(stats.limitBytes / 1024 / 1024)}MB / hits ${stats.hits} / ` +
+            `misses ${stats.misses}）`
+        );
+      }),
+    [withBusy]
+  );
+
+  const handleClearCache = useCallback(
+    () =>
+      withBusy('キャッシュを捨てています…', async () => {
+        await Voicevox.clearSynthesisCache();
+        setStatus('キャッシュを捨てました');
+      }),
+    [withBusy]
+  );
+
   const handleLoadPhrases = useCallback(
     () =>
       withBusy('アクセント句を取得しています…', async () => {
@@ -603,6 +651,20 @@ export default function App() {
             onPress={handleSpeakFromKana}
             disabled={busy || styleId === null}
           />
+        </Group>
+
+        <Group name="8. 合成キャッシュ">
+          <Text style={styles.note}>
+            同じテキスト・スタイル・オプションの組み合わせは、2 回目から合成をやり直しません。
+            ユーザー辞書を変えると読みが変わるので、その時点で自動的に捨てられます。
+          </Text>
+          <Button
+            title="キャッシュの効きを測る（同じ入力で 2 回合成）"
+            onPress={handleMeasureCache}
+            disabled={busy || styleId === null}
+          />
+          <Button title="getSynthesisCacheStats()" onPress={handleCacheStats} disabled={busy} />
+          <Button title="clearSynthesisCache()" onPress={handleClearCache} disabled={busy} />
         </Group>
 
         <Group name="状態">

@@ -10,6 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `src/ExpoVoicevoxModule.web.ts` はテンプレート由来の web スタブ。web はサポート対象外なので、API 追加時に web 実装を作り込む必要はない（バンドラの解決を壊さないためにファイル自体は残す）。
 - 音声合成 API は実装済み。基本（`getVersion` / `isInitialized` / `prepareAssets` / `initialize` / `getCharacters` / `tts` / `finalize`）に加え、AudioQuery 一式（`createAudioQuery` / `createAudioQueryFromKana` / `synthesis` / `ttsFromKana`）、アクセント句編集（`createAccentPhrases` 系 / `replaceMoraData` / `replacePhonemeLength` / `replaceMoraPitch` / `audioQueryFromAccentPhrases`）、ユーザー辞書（`setUserDictWords` / `loadUserDictFile` / `saveUserDictFile`）が揃っている。アセットの取得と配置は `plugin/` の config plugin が担う。
 - メモリ上の WAV をそのまま鳴らす `speak` 系（`speak` / `speakFromKana` / `speakFromAudioQuery` / `stopSpeaking` / `isSpeaking` / `waitForSpeech`）もある。再生制御は停止までで、pause / resume / volume と文分割の逐次再生は入れていない（1 発話 = 1 合成 = 1 再生）。
+- 合成結果はネイティブ側の LRU キャッシュに載るので、同じ入力の 2 回目は推論をやり直さない（`clearSynthesisCache` / `getSynthesisCacheStats`、`initialize` の `synthesisCacheBytes`、各呼び出しの `cache: false`）。
 - **未対応**は歌唱合成（SING）とモデルの実行時アンロードのみ。ストリーミング合成は voicevox_core 0.17.0 自体に API が無い（C ヘッダに `stream` の出現が 0 件）ので「未対応」ではなく「上流に無い」。
 
 ## コマンド
@@ -195,6 +196,29 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
 - 発話の追い越しは**発話 ID の世代管理**で判定する。`speak` の入口で採番して予約し、再生の直前に
   予約がまだ最新かを見る。前の発話を止めるのは「新しい音が鳴り出す瞬間」であって `speak` が
   呼ばれた瞬間ではない（合成に失敗したときに前の音を止め損にしないため）。
+
+### 合成キャッシュの勘所
+
+合成結果の WAV は `VoicevoxWavCache`（`ios/VoicevoxWavCache.swift` / `android/.../VoicevoxWavCache.kt`）
+に LRU で持つ。`speak` 系も `tts` 系も同じキャッシュを通る。
+
+- **ユーザー辞書を変えたら必ず捨てる**。`setUserDictWords` / `loadUserDictFile` は読みを変えるので、
+  残すと古い発音のまま鳴る。`initialize` / `finalize` / `OnDestroy` でも捨てる。`saveUserDictFile`
+  は読みを変えないので捨てない。
+- **キャッシュは直列化の内側にだけ置く**。合成の入口は iOS が `engineQueue`、Android が
+  `engineLock` で直列化済みなので、キャッシュ自身はロックを持たない。`clearSynthesisCache` /
+  `getSynthesisCacheStats` も同じキュー・ロックに載せる（**同期関数にしない**。JS スレッドが
+  合成の完了まで止まる）。
+- **キーは `(種別, styleId, 語尾上げ, ペイロード)`**。ペイロードは自由形式なので必ず最後に置く。
+  `directory` は含めない（合成結果は書き出し先に依存しない）。`tts` 系はキャッシュに当たっても
+  ファイルは毎回書くので、返るパスは常に別物。
+- **上限は件数ではなくバイト数**（既定 32MB）。1 件の WAV は数十 KB〜数 MB と幅があり、件数では
+  メモリ使用量の上限が読めない。単体で上限を超える WAV は格納しない。
+- `android.util.LruCache` と `NSCache` は使わない。前者は Android API なので JVM ユニットテストで
+  検証できず、後者は追い出しが OS 任せでバイト単位の LRU にならない。**両 OS の挙動を 1:1 に
+  揃えるため自前で書いてある**ので、追い出しの規則を変えるときは両方を直すこと。
+- **`ios/` に Swift ファイルを足したら `pod install` が要る**。podspec の glob は pod install 時に
+  展開されるので、回さないと `cannot find 'VoicevoxWavCache' in scope` でビルドが落ちる。
 
 ### AudioQuery のブリッジ（重要）
 

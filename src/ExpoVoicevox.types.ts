@@ -23,6 +23,13 @@ export type VoicevoxInitializeOptions = {
   voiceModelPaths?: string[];
   /** 推論に使う CPU スレッド数。0 で環境に合わせて自動決定する（既定）。 */
   cpuNumThreads?: number;
+  /**
+   * 合成結果のキャッシュに使う上限バイト数。既定は 32MB、`0` で無効。
+   *
+   * 24kHz モノラル 16bit ≒ 48KB/秒 なので、32MB はおよそ 11 分ぶんの音声にあたる。
+   * キャッシュの中身は `initialize()` のたびに捨てられるので、この値は毎回指定すること。
+   */
+  synthesisCacheBytes?: number;
 };
 
 /**
@@ -34,6 +41,7 @@ export type NormalizedVoicevoxInitializeOptions = {
   openJtalkDictDir: string | null;
   voiceModelPaths: string[] | null;
   cpuNumThreads: number;
+  synthesisCacheBytes: number;
 };
 
 /** 端末上に用意されたアセットの絶対パス。 */
@@ -183,6 +191,15 @@ export type VoicevoxSynthesisOptions = {
    * ファイルを作らずそのまま鳴らすだけなら `speak()` を使う。
    */
   directory?: VoicevoxOutputDirectory;
+  /**
+   * 合成結果のキャッシュを使うか。既定は true。
+   *
+   * `false` にすると**読みも書きもしない**。必ず新しく合成し、結果も残さない。
+   * 一度きりの動的なテキストでキャッシュを埋めて、使い回したい音声を追い出さないための逃げ道。
+   *
+   * キャッシュに当たっても書き出されるファイルは毎回新しい（返るパスは常に別物）。
+   */
+  cache?: boolean;
 };
 
 /**
@@ -208,6 +225,24 @@ export type VoicevoxSpeakOptions = {
   enableInterrogativeUpspeak?: boolean;
   /** オーディオセッションの扱い。既定は `'none'`（何も触らない）。 */
   audioSession?: VoicevoxAudioSessionMode;
+  /** 合成結果のキャッシュを使うか。既定は true。`VoicevoxSynthesisOptions` と同じ。 */
+  cache?: boolean;
+};
+
+/**
+ * 合成結果のキャッシュの状態。`getSynthesisCacheStats()` が返す。
+ *
+ * `hits` / `misses` はキャッシュを捨てた時点（`initialize()` / `finalize()` /
+ * 辞書の変更 / `clearSynthesisCache()`）からの累計。
+ */
+export type VoicevoxSynthesisCacheStats = {
+  entryCount: number;
+  /** 保持している WAV の合計バイト数。 */
+  bytes: number;
+  /** `initialize()` で指定した上限。 */
+  limitBytes: number;
+  hits: number;
+  misses: number;
 };
 
 /** `speak()` が返す発話。 */

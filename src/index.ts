@@ -15,6 +15,7 @@ import type {
   VoicevoxSpeakOptions,
   VoicevoxSpeechState,
   VoicevoxSpeechStateChange,
+  VoicevoxSynthesisCacheStats,
   VoicevoxSynthesisOptions,
   VoicevoxUserDictWord,
   VoicevoxUserDictWordType,
@@ -31,6 +32,9 @@ import {
 export * from './ExpoVoicevox.types';
 
 const MAX_CPU_NUM_THREADS = 65535;
+
+/** 合成結果のキャッシュの既定の上限。24kHz モノラル 16bit ≒ 48KB/秒 なので約 11 分ぶん。 */
+const DEFAULT_SYNTHESIS_CACHE_BYTES = 32 * 1024 * 1024;
 
 function assertNonEmptyString(value: unknown, name: string): asserts value is string {
   if (typeof value !== 'string' || value.length === 0) {
@@ -72,6 +76,17 @@ function resolveOutputDirectory(
     throw new Error(`expo-voicevox: directory must be one of ${OUTPUT_DIRECTORIES.join(' / ')}`);
   }
   return directory;
+}
+
+/**
+ * 合成結果のキャッシュを使うかを解決する。既定は true。
+ *
+ * `enableInterrogativeUpspeak` と同じく、ネイティブの既定値には任せず JS 側が常に明示する。
+ */
+function resolveUseCache(
+  options: VoicevoxSynthesisOptions | VoicevoxSpeakOptions | undefined
+): boolean {
+  return options?.cache ?? true;
 }
 
 /** 再生中のオーディオセッションの扱いを解決する。既定は何も触らない `'none'`。 */
@@ -156,11 +171,23 @@ export async function initialize(options: VoicevoxInitializeOptions = {}): Promi
     );
   }
 
+  const synthesisCacheBytes = options.synthesisCacheBytes ?? DEFAULT_SYNTHESIS_CACHE_BYTES;
+  if (
+    !Number.isInteger(synthesisCacheBytes) ||
+    synthesisCacheBytes < 0 ||
+    synthesisCacheBytes > Number.MAX_SAFE_INTEGER
+  ) {
+    throw new Error(
+      'expo-voicevox: synthesisCacheBytes must be an integer between 0 and Number.MAX_SAFE_INTEGER'
+    );
+  }
+
   // 省略されたものは null で渡し、ネイティブ側に自動解決させる。
   await ExpoVoicevoxModule.initialize({
     openJtalkDictDir: openJtalkDictDir ?? null,
     voiceModelPaths: voiceModelPaths ? [...voiceModelPaths] : null,
     cpuNumThreads,
+    synthesisCacheBytes,
   });
 }
 
@@ -209,7 +236,8 @@ export function tts(
     text,
     styleId,
     resolveInterrogativeUpspeak(options),
-    resolveOutputDirectory(options)
+    resolveOutputDirectory(options),
+    resolveUseCache(options)
   );
 }
 
@@ -229,7 +257,8 @@ export function ttsFromKana(
     kana,
     styleId,
     resolveInterrogativeUpspeak(options),
-    resolveOutputDirectory(options)
+    resolveOutputDirectory(options),
+    resolveUseCache(options)
   );
 }
 
@@ -351,7 +380,8 @@ export function synthesis(
     stringifyAudioQuery(audioQuery),
     styleId,
     resolveInterrogativeUpspeak(options),
-    resolveOutputDirectory(options)
+    resolveOutputDirectory(options),
+    resolveUseCache(options)
   );
 }
 
@@ -472,7 +502,13 @@ export function speak(
   const enableInterrogativeUpspeak = resolveInterrogativeUpspeak(options);
   const audioSession = resolveAudioSession(options);
   return trackedSpeak(() =>
-    ExpoVoicevoxModule.speak(text, styleId, enableInterrogativeUpspeak, audioSession)
+    ExpoVoicevoxModule.speak(
+      text,
+      styleId,
+      enableInterrogativeUpspeak,
+      audioSession,
+      resolveUseCache(options)
+    )
   );
 }
 
@@ -487,7 +523,13 @@ export function speakFromKana(
   const enableInterrogativeUpspeak = resolveInterrogativeUpspeak(options);
   const audioSession = resolveAudioSession(options);
   return trackedSpeak(() =>
-    ExpoVoicevoxModule.speakFromKana(kana, styleId, enableInterrogativeUpspeak, audioSession)
+    ExpoVoicevoxModule.speakFromKana(
+      kana,
+      styleId,
+      enableInterrogativeUpspeak,
+      audioSession,
+      resolveUseCache(options)
+    )
   );
 }
 
@@ -511,7 +553,8 @@ export function speakFromAudioQuery(
       audioQueryJson,
       styleId,
       enableInterrogativeUpspeak,
-      audioSession
+      audioSession,
+      resolveUseCache(options)
     )
   );
 }
@@ -662,6 +705,28 @@ export function saveUserDictFile(path: string): Promise<void> {
 export async function finalize(): Promise<void> {
   await ExpoVoicevoxModule.stopSpeaking();
   await ExpoVoicevoxModule.finalize();
+}
+
+/**
+ * 合成結果のキャッシュを空にする。上限（`initialize()` の `synthesisCacheBytes`）は保たれる。
+ *
+ * `initialize()` / `finalize()` / `setUserDictWords()` / `loadUserDictFile()` では自動で空になるので、
+ * 通常は呼ぶ必要が無い。メモリを取り戻したいときに使う（React Native の `AppState` が出す
+ * `'memoryWarning'` に繋ぐのが分かりやすい）。
+ *
+ * 合成用の直列キューの上で動くので、合成の実行中に呼ぶとその完了まで待たされる。
+ */
+export function clearSynthesisCache(): Promise<void> {
+  return ExpoVoicevoxModule.clearSynthesisCache();
+}
+
+/**
+ * 合成結果のキャッシュの状態を返す。上限の調整や、当たっているかの確認に使う。
+ *
+ * `clearSynthesisCache()` と同じく合成用の直列キューの上で動く。
+ */
+export function getSynthesisCacheStats(): Promise<VoicevoxSynthesisCacheStats> {
+  return ExpoVoicevoxModule.getSynthesisCacheStats();
 }
 
 export default ExpoVoicevoxModule;

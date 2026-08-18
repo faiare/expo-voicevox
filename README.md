@@ -225,6 +225,53 @@ playback. Keep `'none'` if something else owns the audio session.
 There is no pause, resume or volume control — only `stopSpeaking()`. One `speak()` is one synthesis
 and one playback; long text is not split into sentences and streamed.
 
+### Reusing synthesized audio
+
+Synthesis is the expensive part — hundreds of milliseconds to several seconds on a phone. The same
+request is therefore synthesized only once: the WAV is kept in an in-memory LRU cache and replayed
+straight from there. This applies to every synthesis entry point, `speak()` and `tts()` alike.
+
+A request is "the same" when the kind (text / kana / AudioQuery), the payload, the `styleId` and
+`enableInterrogativeUpspeak` all match. `directory` is not part of the key — `tts()` still writes a
+fresh file and returns a new path on every call, it just skips the inference.
+
+The cache is bounded by total bytes, not by entry count. The default is 32 MB, which is roughly
+11 minutes of audio at the 24 kHz mono 16-bit voicevox-core produces:
+
+```ts
+await Voicevox.initialize({ synthesisCacheBytes: 8 * 1024 * 1024 }); // 8 MB
+await Voicevox.initialize({ synthesisCacheBytes: 0 });               // disabled
+```
+
+The limit is set by `initialize()` and the cache is emptied there, so pass the value every time.
+A single WAV larger than the limit is never stored, so one long utterance can't evict everything
+else.
+
+The cache is also emptied by `finalize()`, `setUserDictWords()` and `loadUserDictFile()` — changing
+the dictionary changes pronunciations, and stale audio would keep the old reading. Call
+`clearSynthesisCache()` to empty it yourself, and `getSynthesisCacheStats()` to see how it is doing:
+
+```ts
+const { entryCount, bytes, limitBytes, hits, misses } = await Voicevox.getSynthesisCacheStats();
+```
+
+Both run on the synthesis queue, so they wait for an in-flight synthesis to finish.
+
+To reclaim the memory under pressure, hook up React Native's `AppState`:
+
+```ts
+AppState.addEventListener('memoryWarning', () => {
+  Voicevox.clearSynthesisCache();
+});
+```
+
+For one-off text that would only push out audio you want to keep, opt out per call. `cache: false`
+neither reads nor writes — it always synthesizes anew and stores nothing:
+
+```ts
+await Voicevox.speak(`${userName}さん、こんにちは`, 3, { cache: false });
+```
+
 ### Where WAV files are written
 
 `tts()`, `ttsFromKana()` and `synthesis()` write a file and return its absolute path. Pick the
@@ -371,6 +418,8 @@ dictionary.
 | `loadUserDictFile(path)` | async | Loads a VOICEVOX-format dictionary file and merges it into the current one |
 | `saveUserDictFile(path)` | async | Saves the current user dictionary to a file |
 | `finalize()` | async | Stops playback, then destroys the synthesizer |
+| `clearSynthesisCache()` | async | Empties the synthesis cache. The limit is kept |
+| `getSynthesisCacheStats()` | async | Entry count, bytes, limit, hits and misses of the synthesis cache |
 
 On iOS `finalize()` frees resources immediately. On Android the Java API has no explicit close, so
 the reference is dropped and release timing is left to the GC.
