@@ -23,6 +23,13 @@ export type VoicevoxInitializeOptions = {
   voiceModelPaths?: string[];
   /** 推論に使う CPU スレッド数。0 で環境に合わせて自動決定する（既定）。 */
   cpuNumThreads?: number;
+  /**
+   * 合成結果のキャッシュに使う上限バイト数。既定は 32MB、`0` で無効。
+   *
+   * 24kHz モノラル 16bit ≒ 48KB/秒 なので、32MB はおよそ 11 分ぶんの音声にあたる。
+   * キャッシュの中身は `initialize()` のたびに捨てられるので、この値は毎回指定すること。
+   */
+  synthesisCacheBytes?: number;
 };
 
 /**
@@ -34,6 +41,7 @@ export type NormalizedVoicevoxInitializeOptions = {
   openJtalkDictDir: string | null;
   voiceModelPaths: string[] | null;
   cpuNumThreads: number;
+  synthesisCacheBytes: number;
 };
 
 /** 端末上に用意されたアセットの絶対パス。 */
@@ -57,6 +65,32 @@ export type VoicevoxPrepareProgress = {
   totalBytes: number;
   completedFiles: number;
   totalFiles: number;
+};
+
+/**
+ * `getAssetStatus()` が返す、アセットの状態。
+ *
+ * 取得も展開も始めずに読めるものだけを返す。準備の実行中に呼んでも待たされず、そのあいだは
+ * `ready` が false になる。
+ */
+export type VoicevoxAssetStatus = {
+  /**
+   * config plugin が入っているか。
+   *
+   * false なら `app.json` の `plugins` に `@faiare/expo-voicevox` を足して
+   * `npx expo prebuild` を実行するか、`initialize()` へ絶対パスを渡す必要がある。
+   */
+  configured: boolean;
+  /** すぐ使える状態か。true なら `prepareAssets()` は即座に返る。 */
+  ready: boolean;
+  /** config plugin の `assetSource`。 */
+  assetSource: 'bundle' | 'download';
+  /**
+   * `assetSource: 'download'` のとき、`prepareAssets()` が取得する総バイト数。
+   *
+   * `bundle` では 0（アプリに同梱されているので取得は発生しない）。
+   */
+  downloadBytes: number;
 };
 
 export type ExpoVoicevoxModuleEvents = {
@@ -166,6 +200,32 @@ export type NormalizedVoicevoxUserDictWord = {
  */
 export type VoicevoxOutputDirectory = 'cache' | 'document';
 
+/**
+ * AudioQuery を組み立てずに合成の調子を変えるための上書き。
+ *
+ * 1 つでも指定するとネイティブ側が `createAudioQuery()` 相当を挟んでから合成する。
+ * `createAudioQuery()` は言語解析だけで音響モデルの推論を含まないので、増える時間は数十 ms
+ * のオーダーで済む。**キャッシュのキーにはこの指定も入る**ので、同じ値で呼び続ける限り
+ * 2 回目からは丸ごと省かれる。
+ *
+ * 細かく触りたい（アクセント句を編集する、モーラ単位で音高を変える）場合は、これではなく
+ * `createAudioQuery()` と `synthesis()` / `speakFromAudioQuery()` を使う。
+ */
+export type VoicevoxSynthesisParams = {
+  /** 話速。既定 1.0。 */
+  speedScale?: number;
+  /** 音高。既定 0.0。 */
+  pitchScale?: number;
+  /** 抑揚。既定 1.0。 */
+  intonationScale?: number;
+  /** 音量。既定 1.0。 */
+  volumeScale?: number;
+  /** 開始の無音の長さ（秒）。0 にすると頭出しが速くなる。 */
+  prePhonemeLength?: number;
+  /** 終了の無音の長さ（秒）。 */
+  postPhonemeLength?: number;
+};
+
 /** `tts()` / `synthesis()` / `ttsFromKana()` の合成オプション。 */
 export type VoicevoxSynthesisOptions = {
   /**
@@ -183,7 +243,24 @@ export type VoicevoxSynthesisOptions = {
    * ファイルを作らずそのまま鳴らすだけなら `speak()` を使う。
    */
   directory?: VoicevoxOutputDirectory;
+  /**
+   * 合成結果のキャッシュを使うか。既定は true。
+   *
+   * `false` にすると**読みも書きもしない**。必ず新しく合成し、結果も残さない。
+   * 一度きりの動的なテキストでキャッシュを埋めて、使い回したい音声を追い出さないための逃げ道。
+   *
+   * キャッシュに当たっても書き出されるファイルは毎回新しい（返るパスは常に別物）。
+   */
+  cache?: boolean;
 };
+
+/**
+ * `tts()` / `ttsFromKana()` のオプション。
+ *
+ * テキストとカナからの合成は AudioQuery をネイティブ側で作れるので、`synthesis()` と違って
+ * 合成パラメータをここで直接指定できる。
+ */
+export type VoicevoxTextSynthesisOptions = VoicevoxSynthesisOptions & VoicevoxSynthesisParams;
 
 /**
  * 再生のあいだだけオーディオセッション（iOS）/ オーディオフォーカス（Android）をどう扱うか。
@@ -208,7 +285,43 @@ export type VoicevoxSpeakOptions = {
   enableInterrogativeUpspeak?: boolean;
   /** オーディオセッションの扱い。既定は `'none'`（何も触らない）。 */
   audioSession?: VoicevoxAudioSessionMode;
+  /** 合成結果のキャッシュを使うか。既定は true。`VoicevoxSynthesisOptions` と同じ。 */
+  cache?: boolean;
 };
+
+/**
+ * 合成結果のキャッシュの状態。`getSynthesisCacheStats()` が返す。
+ *
+ * `hits` / `misses` はキャッシュを捨てた時点（`initialize()` / `finalize()` /
+ * 辞書の変更 / `clearSynthesisCache()`）からの累計。
+ */
+export type VoicevoxSynthesisCacheStats = {
+  entryCount: number;
+  /** 保持している WAV の合計バイト数。 */
+  bytes: number;
+  /** `initialize()` で指定した上限。 */
+  limitBytes: number;
+  hits: number;
+  misses: number;
+};
+
+/**
+ * `speak()` / `speakFromKana()` のオプション。
+ *
+ * `speakFromAudioQuery()` は AudioQuery 自体がパラメータを持っているので `VoicevoxSpeakOptions`
+ * のままにしてある（ここで重ねられると、どちらが効くのか読めなくなる）。
+ */
+export type VoicevoxTextSpeakOptions = VoicevoxSpeakOptions & VoicevoxSynthesisParams;
+
+/**
+ * `precacheSpeech()` 系のオプション。
+ *
+ * 鳴らさないので `audioSession` は無く、キャッシュに入れるのが目的なので `cache` も無い。
+ */
+export type VoicevoxPrecacheOptions = {
+  /** 疑問文の語尾を自動で上げるか。既定は true。 */
+  enableInterrogativeUpspeak?: boolean;
+} & VoicevoxSynthesisParams;
 
 /** `speak()` が返す発話。 */
 export type VoicevoxUtterance = {

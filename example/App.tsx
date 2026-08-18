@@ -126,11 +126,41 @@ export default function App() {
   const handlePrepareAssets = useCallback(
     () =>
       withBusy('アセットを準備しています…', async () => {
-        const paths = await Voicevox.prepareAssets();
-        setStatus(`辞書: ${paths.openJtalkDictDir}\nモデル: ${paths.voiceModelPaths.join(', ')}`);
+        const started = Date.now();
+        try {
+          const paths = await Voicevox.prepareAssets();
+          setStatus(
+            `${Date.now() - started}ms\n辞書: ${paths.openJtalkDictDir}\n` +
+              `モデル: ${paths.voiceModelPaths.join(', ')}`
+          );
+        } catch (e) {
+          // 中断は失敗ではないので、通信エラーと同じ扱いにしない。
+          if (!Voicevox.isPrepareAssetsCancelled(e)) {
+            throw e;
+          }
+          setStatus(`アセットの準備を中断しました（${Date.now() - started}ms）`);
+        }
       }),
     [withBusy]
   );
+
+  const handleAssetStatus = useCallback(
+    () =>
+      withBusy('アセットの状態を読んでいます…', async () => {
+        const status = await Voicevox.getAssetStatus();
+        setStatus(
+          `configured: ${status.configured} / ready: ${status.ready} / ` +
+            `assetSource: ${status.assetSource} / ` +
+            `downloadBytes: ${Math.round(status.downloadBytes / 1024 / 1024)}MB`
+        );
+      }),
+    [withBusy]
+  );
+
+  // 準備の実行中に押せる必要があるので、busy でも disabled にしない。
+  const handleCancelPrepare = useCallback(() => {
+    Voicevox.cancelPrepareAssets();
+  }, []);
 
   const handleInitialize = useCallback(
     () =>
@@ -218,11 +248,108 @@ export default function App() {
     [styleId, text, upspeak, withBusy]
   );
 
+  // AudioQuery を組み立てずに話速と頭出しを変える。ネイティブが createAudioQuery を挟むが、
+  // 言語解析だけで音響モデルの推論は入らないので増えるのは数十 ms。
+  const handleSpeakFaster = useCallback(
+    () =>
+      withBusy('合成して再生しています…', async () => {
+        if (styleId === null) {
+          throw new Error('スタイルを選んでください');
+        }
+        const started = Date.now();
+        const utterance = await Voicevox.speak(text, styleId, {
+          enableInterrogativeUpspeak: upspeak,
+          audioSession: 'exclusive',
+          speedScale: 1.1,
+          prePhonemeLength: 0,
+        });
+        setStatus(
+          `speedScale 1.1 / prePhonemeLength 0（合成 ${Date.now() - started}ms / ` +
+            `再生 ${utterance.durationMillis}ms）`
+        );
+      }),
+    [styleId, text, upspeak, withBusy]
+  );
+
   const handleStopSpeaking = useCallback(
     () =>
       withBusy('停止しています…', async () => {
         await Voicevox.stopSpeaking();
         setStatus(`停止しました（isSpeaking: ${Voicevox.isSpeaking()}）`);
+      }),
+    [withBusy]
+  );
+
+  // キャッシュが効いているかは合成にかかる時間でしか分からないので、同じ入力を 2 回続けて測る。
+  const handleMeasureCache = useCallback(
+    () =>
+      withBusy('キャッシュの効きを測っています…', async () => {
+        if (styleId === null) {
+          throw new Error('スタイルを選んでください');
+        }
+        await Voicevox.clearSynthesisCache();
+
+        const coldStart = Date.now();
+        await Voicevox.tts(text, styleId, { enableInterrogativeUpspeak: upspeak });
+        const cold = Date.now() - coldStart;
+
+        const warmStart = Date.now();
+        await Voicevox.tts(text, styleId, { enableInterrogativeUpspeak: upspeak });
+        const warm = Date.now() - warmStart;
+
+        const stats = await Voicevox.getSynthesisCacheStats();
+        setStatus(
+          `1 回目 ${cold}ms / 2 回目 ${warm}ms（hits ${stats.hits} / misses ${stats.misses} / ` +
+            `${stats.entryCount} 件 ${Math.round(stats.bytes / 1024)}KB）`
+        );
+      }),
+    [styleId, text, upspeak, withBusy]
+  );
+
+  // 押した瞬間に喋らせたい画面のための「先に合成だけしておく」経路。
+  const handlePrecache = useCallback(
+    () =>
+      withBusy('先に合成しています…', async () => {
+        if (styleId === null) {
+          throw new Error('スタイルを選んでください');
+        }
+        await Voicevox.clearSynthesisCache();
+
+        const precacheStart = Date.now();
+        await Voicevox.precacheSpeech(text, styleId, { enableInterrogativeUpspeak: upspeak });
+        const precache = Date.now() - precacheStart;
+
+        const speakStart = Date.now();
+        const utterance = await Voicevox.speak(text, styleId, {
+          enableInterrogativeUpspeak: upspeak,
+          audioSession: 'exclusive',
+        });
+        setStatus(
+          `precacheSpeech ${precache}ms → speak ${Date.now() - speakStart}ms` +
+            `（started: ${utterance.started}）`
+        );
+      }),
+    [styleId, text, upspeak, withBusy]
+  );
+
+  const handleCacheStats = useCallback(
+    () =>
+      withBusy('キャッシュの状態を読んでいます…', async () => {
+        const stats = await Voicevox.getSynthesisCacheStats();
+        setStatus(
+          `${stats.entryCount} 件 / ${Math.round(stats.bytes / 1024)}KB ` +
+            `（上限 ${Math.round(stats.limitBytes / 1024 / 1024)}MB / hits ${stats.hits} / ` +
+            `misses ${stats.misses}）`
+        );
+      }),
+    [withBusy]
+  );
+
+  const handleClearCache = useCallback(
+    () =>
+      withBusy('キャッシュを捨てています…', async () => {
+        await Voicevox.clearSynthesisCache();
+        setStatus('キャッシュを捨てました');
       }),
     [withBusy]
   );
@@ -309,7 +436,10 @@ export default function App() {
             音声モデルと OpenJTalk 辞書は app.json の expo-voicevox plugin が prebuild
             時に埋め込んでいます。Android は初回のみ端末への展開が走ります。
           </Text>
+          <Button title="getAssetStatus()" onPress={handleAssetStatus} disabled={busy} />
           <Button title="prepareAssets()" onPress={handlePrepareAssets} disabled={busy} />
+          {/* 準備中に押すためのボタンなので busy では止めない。 */}
+          <Button title="cancelPrepareAssets()" onPress={handleCancelPrepare} />
           <Button title="initialize()" onPress={handleInitialize} disabled={busy} />
           <Button
             title="finalize()"
@@ -366,6 +496,11 @@ export default function App() {
           <Button
             title="speak() で再生（ファイルを作らない）"
             onPress={handleSpeakOnDemand}
+            disabled={busy || styleId === null}
+          />
+          <Button
+            title="speak() で再生（speedScale 1.1 / prePhonemeLength 0）"
+            onPress={handleSpeakFaster}
             disabled={busy || styleId === null}
           />
           {/* 再生中は busy になるので、停止だけは busy でも押せるようにしておく。 */}
@@ -603,6 +738,25 @@ export default function App() {
             onPress={handleSpeakFromKana}
             disabled={busy || styleId === null}
           />
+        </Group>
+
+        <Group name="8. 合成キャッシュ">
+          <Text style={styles.note}>
+            同じテキスト・スタイル・オプションの組み合わせは、2 回目から合成をやり直しません。
+            ユーザー辞書を変えると読みが変わるので、その時点で自動的に捨てられます。
+          </Text>
+          <Button
+            title="キャッシュの効きを測る（同じ入力で 2 回合成）"
+            onPress={handleMeasureCache}
+            disabled={busy || styleId === null}
+          />
+          <Button
+            title="precacheSpeech() で温めてから speak()"
+            onPress={handlePrecache}
+            disabled={busy || styleId === null}
+          />
+          <Button title="getSynthesisCacheStats()" onPress={handleCacheStats} disabled={busy} />
+          <Button title="clearSynthesisCache()" onPress={handleClearCache} disabled={busy} />
         </Group>
 
         <Group name="状態">

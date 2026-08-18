@@ -24,12 +24,16 @@ object VoicevoxDownloader {
   /**
    * [url] を [destination] へ保存し、期待値があれば検証する。
    * ダウンロード中は `.part` に書き、検証を通ってから rename する。
+   *
+   * [isCancelled] は 1 バッファごとに見る。173MB を 1 本で落とすので、
+   * ファイル単位のチェックでは中断が効かない。
    */
   fun download(
     url: String,
     destination: File,
     expectedSize: Long?,
     expectedSha256: String?,
+    isCancelled: () -> Boolean = { false },
     onProgress: ProgressListener
   ) {
     destination.parentFile?.let { if (!it.exists() && !it.mkdirs()) {
@@ -59,6 +63,9 @@ object VoicevoxDownloader {
         part.outputStream().buffered(BUFFER_SIZE).use { output ->
           val buffer = ByteArray(BUFFER_SIZE)
           while (true) {
+            if (isCancelled()) {
+              throw VoicevoxCancelledException()
+            }
             val read = input.read(buffer)
             if (read < 0) break
             output.write(buffer, 0, read)

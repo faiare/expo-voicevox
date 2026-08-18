@@ -4,17 +4,25 @@ import {
   addPrepareProgressListener,
   addSpeechStateChangeListener,
   audioQueryFromAccentPhrases,
+  cancelPrepareAssets,
+  clearSynthesisCache,
   createAccentPhrases,
   createAccentPhrasesFromKana,
   createAudioQuery,
   createAudioQueryFromKana,
   finalize,
+  getAssetStatus,
   getCharacters,
+  getSynthesisCacheStats,
   getVersion,
   initialize,
   isInitialized,
+  isPrepareAssetsCancelled,
   isSpeaking,
   loadUserDictFile,
+  precacheSpeech,
+  precacheSpeechFromAudioQuery,
+  precacheSpeechFromKana,
   prepareAssets,
   replaceMoraData,
   replaceMoraPitch,
@@ -37,6 +45,8 @@ jest.mock('../ExpoVoicevoxModule', () => ({
     getVersion: jest.fn(),
     isInitialized: jest.fn(),
     prepareAssets: jest.fn(),
+    getAssetStatus: jest.fn(),
+    cancelPrepareAssets: jest.fn(),
     initialize: jest.fn(),
     getMetasJson: jest.fn(),
     tts: jest.fn(),
@@ -58,6 +68,11 @@ jest.mock('../ExpoVoicevoxModule', () => ({
     setUserDictWords: jest.fn(),
     loadUserDictFile: jest.fn(),
     saveUserDictFile: jest.fn(),
+    precacheSpeech: jest.fn(),
+    precacheSpeechFromKana: jest.fn(),
+    precacheSpeechFromAudioQuery: jest.fn(),
+    clearSynthesisCache: jest.fn(),
+    getSynthesisCacheStats: jest.fn(),
     finalize: jest.fn(),
     addListener: jest.fn(),
   },
@@ -138,6 +153,7 @@ describe('initialize', () => {
       openJtalkDictDir: null,
       voiceModelPaths: null,
       cpuNumThreads: 0,
+      synthesisCacheBytes: 32 * 1024 * 1024,
     });
   });
 
@@ -150,6 +166,7 @@ describe('initialize', () => {
       openJtalkDictDir: null,
       voiceModelPaths: null,
       cpuNumThreads: 2,
+      synthesisCacheBytes: 32 * 1024 * 1024,
     });
   });
 
@@ -162,6 +179,7 @@ describe('initialize', () => {
       openJtalkDictDir: '/tmp/dict',
       voiceModelPaths: null,
       cpuNumThreads: 0,
+      synthesisCacheBytes: 32 * 1024 * 1024,
     });
   });
 
@@ -174,6 +192,7 @@ describe('initialize', () => {
       openJtalkDictDir: validOptions.openJtalkDictDir,
       voiceModelPaths: validOptions.voiceModelPaths,
       cpuNumThreads: 0,
+      synthesisCacheBytes: 32 * 1024 * 1024,
     });
   });
 
@@ -223,6 +242,26 @@ describe('initialize', () => {
     await expect(initialize({ ...validOptions, cpuNumThreads })).rejects.toThrow('cpuNumThreads');
     expect(nativeModule.initialize).not.toHaveBeenCalled();
   });
+
+  it('指定された synthesisCacheBytes をそのまま渡す', async () => {
+    nativeModule.initialize.mockResolvedValue(undefined);
+
+    await initialize({ ...validOptions, synthesisCacheBytes: 0 });
+
+    expect(nativeModule.initialize).toHaveBeenCalledWith(
+      expect.objectContaining({ synthesisCacheBytes: 0 })
+    );
+  });
+
+  it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'synthesisCacheBytes が %p なら throw する',
+    async (synthesisCacheBytes) => {
+      await expect(initialize({ ...validOptions, synthesisCacheBytes })).rejects.toThrow(
+        'synthesisCacheBytes'
+      );
+      expect(nativeModule.initialize).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('getCharacters', () => {
@@ -266,7 +305,7 @@ describe('tts', () => {
     nativeModule.tts.mockResolvedValue('/tmp/cache/voicevox-1.wav');
 
     await expect(tts('こんにちは', 3)).resolves.toBe('/tmp/cache/voicevox-1.wav');
-    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true, 'cache');
+    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true, 'cache', true, '');
   });
 
   it('疑問文の語尾上げを明示的に無効にできる', async () => {
@@ -274,7 +313,7 @@ describe('tts', () => {
 
     await tts('元気ですか', 3, { enableInterrogativeUpspeak: false });
 
-    expect(nativeModule.tts).toHaveBeenCalledWith('元気ですか', 3, false, 'cache');
+    expect(nativeModule.tts).toHaveBeenCalledWith('元気ですか', 3, false, 'cache', true, '');
   });
 
   it('text が空ならネイティブを呼ばずに throw する', () => {
@@ -293,7 +332,14 @@ describe('ttsFromKana', () => {
     nativeModule.ttsFromKana.mockResolvedValue('/tmp/cache/voicevox-2.wav');
 
     await expect(ttsFromKana("コンニチワ'", 3)).resolves.toBe('/tmp/cache/voicevox-2.wav');
-    expect(nativeModule.ttsFromKana).toHaveBeenCalledWith("コンニチワ'", 3, true, 'cache');
+    expect(nativeModule.ttsFromKana).toHaveBeenCalledWith(
+      "コンニチワ'",
+      3,
+      true,
+      'cache',
+      true,
+      ''
+    );
   });
 
   it('kana が空ならネイティブを呼ばずに throw する', () => {
@@ -394,7 +440,7 @@ describe('書き出し先の指定', () => {
 
     await tts('こんにちは', 3);
 
-    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true, 'cache');
+    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true, 'cache', true, '');
   });
 
   it('tts に document を指定できる', async () => {
@@ -402,7 +448,7 @@ describe('書き出し先の指定', () => {
 
     await tts('こんにちは', 3, { directory: 'document' });
 
-    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true, 'document');
+    expect(nativeModule.tts).toHaveBeenCalledWith('こんにちは', 3, true, 'document', true, '');
   });
 
   it('ttsFromKana に document を指定できる', async () => {
@@ -410,7 +456,14 @@ describe('書き出し先の指定', () => {
 
     await ttsFromKana("コンニチワ'", 3, { directory: 'document' });
 
-    expect(nativeModule.ttsFromKana).toHaveBeenCalledWith("コンニチワ'", 3, true, 'document');
+    expect(nativeModule.ttsFromKana).toHaveBeenCalledWith(
+      "コンニチワ'",
+      3,
+      true,
+      'document',
+      true,
+      ''
+    );
   });
 
   it('synthesis に document を指定できる', async () => {
@@ -436,7 +489,7 @@ describe('speak', () => {
     nativeModule.speak.mockResolvedValue(UTTERANCE);
 
     await expect(speak('こんにちは', 3)).resolves.toEqual(UTTERANCE);
-    expect(nativeModule.speak).toHaveBeenCalledWith('こんにちは', 3, true, 'none');
+    expect(nativeModule.speak).toHaveBeenCalledWith('こんにちは', 3, true, 'none', true, '');
   });
 
   it('オーディオセッションを指定できる', async () => {
@@ -444,7 +497,7 @@ describe('speak', () => {
 
     await speak('こんにちは', 3, { audioSession: 'duck' });
 
-    expect(nativeModule.speak).toHaveBeenCalledWith('こんにちは', 3, true, 'duck');
+    expect(nativeModule.speak).toHaveBeenCalledWith('こんにちは', 3, true, 'duck', true, '');
   });
 
   it('疑問文の語尾上げを明示的に無効にできる', async () => {
@@ -452,7 +505,7 @@ describe('speak', () => {
 
     await speak('元気ですか', 3, { enableInterrogativeUpspeak: false });
 
-    expect(nativeModule.speak).toHaveBeenCalledWith('元気ですか', 3, false, 'none');
+    expect(nativeModule.speak).toHaveBeenCalledWith('元気ですか', 3, false, 'none', true, '');
   });
 
   it('text が空ならネイティブを呼ばずに throw する', () => {
@@ -476,7 +529,14 @@ describe('speakFromKana', () => {
     nativeModule.speakFromKana.mockResolvedValue(UTTERANCE);
 
     await expect(speakFromKana("コンニチワ'", 3)).resolves.toEqual(UTTERANCE);
-    expect(nativeModule.speakFromKana).toHaveBeenCalledWith("コンニチワ'", 3, true, 'none');
+    expect(nativeModule.speakFromKana).toHaveBeenCalledWith(
+      "コンニチワ'",
+      3,
+      true,
+      'none',
+      true,
+      ''
+    );
   });
 
   it('kana が空ならネイティブを呼ばずに throw する', () => {
@@ -791,5 +851,195 @@ describe('finalize', () => {
     await finalize();
 
     expect(order).toEqual(['stopSpeaking', 'finalize']);
+  });
+});
+
+describe('合成結果のキャッシュ', () => {
+  it('cache 未指定なら true を渡す', async () => {
+    nativeModule.speak.mockResolvedValue(UTTERANCE);
+
+    await speak('こんにちは', 3);
+
+    expect(nativeModule.speak).toHaveBeenCalledWith('こんにちは', 3, true, 'none', true, '');
+  });
+
+  it.each([
+    ['tts', () => tts('こんにちは', 3, { cache: false }), () => nativeModule.tts, 4],
+    [
+      'ttsFromKana',
+      () => ttsFromKana("コンニチワ'", 3, { cache: false }),
+      () => nativeModule.ttsFromKana,
+      4,
+    ],
+    ['speak', () => speak('こんにちは', 3, { cache: false }), () => nativeModule.speak, 4],
+    [
+      'speakFromKana',
+      () => speakFromKana("コンニチワ'", 3, { cache: false }),
+      () => nativeModule.speakFromKana,
+      4,
+    ],
+  ])('%s は cache: false をネイティブへ渡す', async (_name, call, mock, index) => {
+    mock().mockResolvedValue(UTTERANCE);
+
+    await call();
+
+    expect(mock().mock.calls[0][index as number]).toBe(false);
+  });
+
+  it('synthesis は cache: false をネイティブへ渡す', async () => {
+    nativeModule.createAudioQueryJson.mockResolvedValue(CORE_AUDIO_QUERY_JSON);
+    nativeModule.synthesis.mockResolvedValue('/tmp/cache/voicevox-3.wav');
+    const query = await createAudioQuery('あ', 3);
+
+    await synthesis(query, 3, { cache: false });
+
+    expect(nativeModule.synthesis.mock.calls[0][4]).toBe(false);
+  });
+
+  it('speakFromAudioQuery は cache: false をネイティブへ渡す', async () => {
+    nativeModule.createAudioQueryJson.mockResolvedValue(CORE_AUDIO_QUERY_JSON);
+    nativeModule.speakFromAudioQuery.mockResolvedValue(UTTERANCE);
+    const query = await createAudioQuery('あ', 3);
+
+    await speakFromAudioQuery(query, 3, { cache: false });
+
+    expect(nativeModule.speakFromAudioQuery.mock.calls[0][4]).toBe(false);
+  });
+
+  it('clearSynthesisCache はネイティブへそのまま委譲する', async () => {
+    nativeModule.clearSynthesisCache.mockResolvedValue(undefined);
+
+    await clearSynthesisCache();
+
+    expect(nativeModule.clearSynthesisCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('getSynthesisCacheStats はネイティブの返り値をそのまま返す', async () => {
+    const stats = { entryCount: 2, bytes: 100, limitBytes: 1000, hits: 3, misses: 1 };
+    nativeModule.getSynthesisCacheStats.mockResolvedValue(stats);
+
+    await expect(getSynthesisCacheStats()).resolves.toBe(stats);
+  });
+});
+
+describe('合成パラメータの直接指定', () => {
+  it('指定が無ければ空文字を渡し、AudioQuery を挟ませない', async () => {
+    nativeModule.speak.mockResolvedValue(UTTERANCE);
+
+    await speak('こんにちは', 3, { audioSession: 'duck' });
+
+    expect(nativeModule.speak.mock.calls[0][5]).toBe('');
+  });
+
+  it('指定した値だけを JSON にして渡す', async () => {
+    nativeModule.speak.mockResolvedValue(UTTERANCE);
+
+    await speak('こんにちは', 3, { speedScale: 1.1, prePhonemeLength: 0 });
+
+    expect(nativeModule.speak.mock.calls[0][5]).toBe('{"speedScale":1.1,"prePhonemeLength":0}');
+  });
+
+  it('オブジェクトの並び順に関係なくキーの順序を固定する', async () => {
+    nativeModule.speak.mockResolvedValue(UTTERANCE);
+
+    // キャッシュキーの一部になるので、書いた順で JSON が変わってはいけない。
+    await speak('こんにちは', 3, { prePhonemeLength: 0, speedScale: 1.1 });
+
+    expect(nativeModule.speak.mock.calls[0][5]).toBe('{"speedScale":1.1,"prePhonemeLength":0}');
+  });
+
+  it('tts と ttsFromKana も同じ形で渡す', async () => {
+    nativeModule.tts.mockResolvedValue('/tmp/cache/voicevox-1.wav');
+    nativeModule.ttsFromKana.mockResolvedValue('/tmp/cache/voicevox-2.wav');
+
+    await tts('こんにちは', 3, { volumeScale: 0.8 });
+    await ttsFromKana("コンニチワ'", 3, { intonationScale: 1.2 });
+
+    expect(nativeModule.tts.mock.calls[0][5]).toBe('{"volumeScale":0.8}');
+    expect(nativeModule.ttsFromKana.mock.calls[0][5]).toBe('{"intonationScale":1.2}');
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, '1.1' as never])(
+    'speedScale が %p ならネイティブを呼ばずに throw する',
+    async (speedScale) => {
+      await expect(speak('こんにちは', 3, { speedScale })).rejects.toThrow('speedScale');
+      expect(nativeModule.speak).not.toHaveBeenCalled();
+    }
+  );
+});
+
+describe('precacheSpeech', () => {
+  it('語尾上げと合成パラメータをネイティブへ渡す', async () => {
+    nativeModule.precacheSpeech.mockResolvedValue(undefined);
+
+    await precacheSpeech('こんにちは', 3, { speedScale: 1.1 });
+
+    expect(nativeModule.precacheSpeech).toHaveBeenCalledWith(
+      'こんにちは',
+      3,
+      true,
+      '{"speedScale":1.1}'
+    );
+  });
+
+  it('カナ版もネイティブへ委譲する', async () => {
+    nativeModule.precacheSpeechFromKana.mockResolvedValue(undefined);
+
+    await precacheSpeechFromKana("コンニチワ'", 3);
+
+    expect(nativeModule.precacheSpeechFromKana).toHaveBeenCalledWith("コンニチワ'", 3, true, '');
+  });
+
+  it('AudioQuery 版は JSON にして渡す', async () => {
+    nativeModule.createAudioQueryJson.mockResolvedValue(CORE_AUDIO_QUERY_JSON);
+    nativeModule.precacheSpeechFromAudioQuery.mockResolvedValue(undefined);
+    const query = await createAudioQuery('あ', 3);
+
+    await precacheSpeechFromAudioQuery(query, 3);
+
+    const [json, styleId, upspeak] = nativeModule.precacheSpeechFromAudioQuery.mock.calls[0];
+    expect(JSON.parse(json).accent_phrases).toHaveLength(1);
+    expect(styleId).toBe(3);
+    expect(upspeak).toBe(true);
+  });
+
+  it('text が空ならネイティブを呼ばずに throw する', () => {
+    expect(() => precacheSpeech('', 3)).toThrow('text');
+    expect(nativeModule.precacheSpeech).not.toHaveBeenCalled();
+  });
+});
+
+describe('アセットの状態と中断', () => {
+  it('getAssetStatus はネイティブの返り値をそのまま返す', async () => {
+    const status = {
+      configured: true,
+      ready: false,
+      assetSource: 'download' as const,
+      downloadBytes: 181_000_000,
+    };
+    nativeModule.getAssetStatus.mockResolvedValue(status);
+
+    await expect(getAssetStatus()).resolves.toBe(status);
+  });
+
+  it('cancelPrepareAssets はネイティブへそのまま委譲する', async () => {
+    nativeModule.cancelPrepareAssets.mockResolvedValue(undefined);
+
+    await cancelPrepareAssets();
+
+    expect(nativeModule.cancelPrepareAssets).toHaveBeenCalledTimes(1);
+  });
+
+  it('中断のエラーだけを isPrepareAssetsCancelled が拾う', () => {
+    // ネイティブ 2 実装が投げる文言。ここが食い違うと中断を通信エラーと区別できなくなる。
+    expect(isPrepareAssetsCancelled(new Error('the asset preparation was cancelled'))).toBe(true);
+    expect(
+      isPrepareAssetsCancelled(
+        new Error('failed to prepare the voicevox assets: the asset preparation was cancelled')
+      )
+    ).toBe(true);
+    expect(isPrepareAssetsCancelled(new Error('failed to download: HTTP 503'))).toBe(false);
+    expect(isPrepareAssetsCancelled('the asset preparation was cancelled')).toBe(false);
+    expect(isPrepareAssetsCancelled(undefined)).toBe(false);
   });
 });

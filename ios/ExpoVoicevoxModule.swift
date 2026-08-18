@@ -12,6 +12,13 @@ struct VoicevoxInitializeOptions: Record {
 
   @Field
   var cpuNumThreads: Int = 0
+
+  /// 合成結果のキャッシュに使う上限バイト数。0 で無効。
+  ///
+  /// Int で受けると 32bit 環境で 2GB を超える指定が無言で壊れるので、JS の number をそのまま
+  /// Double で受けて `cacheLimitBytes(_:)` で検証する。
+  @Field
+  var synthesisCacheBytes: Double = Double(VoicevoxWavCache.defaultLimitBytes)
 }
 
 /// ユーザー辞書へ登録する単語。既定値は JS 側で埋まっている。
@@ -39,6 +46,16 @@ final class VoicevoxException: GenericException<String> {
   }
 }
 
+/// `cancelPrepareAssets()` で中断されたときに `prepareAssets()` が投げる例外。
+///
+/// メッセージの文言は JS の `isPrepareAssetsCancelled()` と Android 側の
+/// `VoicevoxCancelledException` が一致していることに依存している。変えるときは 3 箇所とも直すこと。
+final class VoicevoxCancelledException: Exception {
+  override var reason: String {
+    "the asset preparation was cancelled"
+  }
+}
+
 public class ExpoVoicevoxModule: Module {
   private let engine = VoicevoxEngine()
 
@@ -47,6 +64,9 @@ public class ExpoVoicevoxModule: Module {
 
   /// voicevox-core の Synthesizer は同時実行できないので、重い処理は 1 本の直列キューに載せる。
   private let engineQueue = DispatchQueue(label: "expo.modules.voicevox.engine")
+
+  /// 合成結果の LRU キャッシュ。engineQueue の上でだけ触るので、自前のロックは持たない。
+  private let wavCache = VoicevoxWavCache()
 
   public func definition() -> ModuleDefinition {
     Name("ExpoVoicevox")
@@ -67,7 +87,10 @@ public class ExpoVoicevoxModule: Module {
       // 停止は engineQueue に依存しないので先に済ませる（合成の実行中でも即座に黙る）。
       self.player.stop()
       // 合成の実行中に破棄されうるので、直列キューの上で解放する。
-      self.engineQueue.sync { self.engine.release() }
+      self.engineQueue.sync {
+        self.engine.release()
+        self.wavCache.clear()
+      }
     }
 
     Function("getVersion") { () -> String in
@@ -91,6 +114,17 @@ public class ExpoVoicevoxModule: Module {
     }
     .runOnQueue(engineQueue)
 
+    // 取得も展開も始めずに読むだけなので engineQueue には載せない
+    // （準備の実行中でも「まだ ready でない」と即座に返せる）。
+    AsyncFunction("getAssetStatus") { () -> [String: Any] in
+      VoicevoxAssets.shared.status().dictionary
+    }
+
+    // 準備の実行中に呼ばれる API なので、engineQueue に載せてはいけない（載せると自分が待たされる）。
+    AsyncFunction("cancelPrepareAssets") {
+      VoicevoxAssets.shared.cancel()
+    }
+
     AsyncFunction("initialize") { (options: VoicevoxInitializeOptions) in
       guard let cpuNumThreads = UInt16(exactly: options.cpuNumThreads) else {
         throw VoicevoxException("cpuNumThreads is out of range: \(options.cpuNumThreads)")
@@ -109,6 +143,7 @@ public class ExpoVoicevoxModule: Module {
         modelPaths = options.voiceModelPaths ?? prepared.voiceModelPaths
       }
 
+      let limitBytes = try self.cacheLimitBytes(options.synthesisCacheBytes)
       try self.wrappingErrors {
         try self.engine.initialize(
           openJtalkDictDir: dictDir,
@@ -116,6 +151,9 @@ public class ExpoVoicevoxModule: Module {
           cpuNumThreads: cpuNumThreads
         )
       }
+      // 読み込むモデルが変わりうるので、初期化のたびに作り直す。
+      self.wavCache.limitBytes = limitBytes
+      self.wavCache.clear()
     }
     .runOnQueue(engineQueue)
 
@@ -125,24 +163,46 @@ public class ExpoVoicevoxModule: Module {
     .runOnQueue(engineQueue)
 
     AsyncFunction("tts") {
-      (text: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String) -> String in
-      try self.synthesize(styleId: styleId, directory: directory) { styleId in
-        try self.engine.tts(
+      (text: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String,
+        useCache: Bool, paramsJson: String) -> String in
+      let key = VoicevoxWavCache.key(
+        kind: "text",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
+        payload: text
+      )
+      return try self.synthesize(
+        styleId: styleId, directory: directory, cacheKey: key, useCache: useCache
+      ) { styleId in
+        try self.synthesizeText(
           text: text,
           styleId: styleId,
-          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+          paramsJson: paramsJson
         )
       }
     }
     .runOnQueue(engineQueue)
 
     AsyncFunction("ttsFromKana") {
-      (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String) -> String in
-      try self.synthesize(styleId: styleId, directory: directory) { styleId in
-        try self.engine.ttsFromKana(
+      (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String,
+        useCache: Bool, paramsJson: String) -> String in
+      let key = VoicevoxWavCache.key(
+        kind: "kana",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
+        payload: kana
+      )
+      return try self.synthesize(
+        styleId: styleId, directory: directory, cacheKey: key, useCache: useCache
+      ) { styleId in
+        try self.synthesizeKana(
           kana: kana,
           styleId: styleId,
-          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+          paramsJson: paramsJson
         )
       }
     }
@@ -214,9 +274,18 @@ public class ExpoVoicevoxModule: Module {
     }
 
     AsyncFunction("synthesis") {
-      (audioQueryJson: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String)
-        -> String in
-      try self.synthesize(styleId: styleId, directory: directory) { styleId in
+      (audioQueryJson: String, styleId: Int, enableInterrogativeUpspeak: Bool, directory: String,
+        useCache: Bool) -> String in
+      let key = VoicevoxWavCache.key(
+        kind: "query",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: "",
+        payload: audioQueryJson
+      )
+      return try self.synthesize(
+        styleId: styleId, directory: directory, cacheKey: key, useCache: useCache
+      ) { styleId in
         try self.engine.synthesis(
           audioQueryJson: audioQueryJson,
           styleId: styleId,
@@ -228,12 +297,23 @@ public class ExpoVoicevoxModule: Module {
 
     AsyncFunction("speak") {
       (text: String, styleId: Int, enableInterrogativeUpspeak: Bool, audioSession: String,
-        promise: Promise) in
-      self.speakWav(styleId: styleId, audioSession: audioSession, promise: promise) { styleId in
-        try self.engine.tts(
+        useCache: Bool, paramsJson: String, promise: Promise) in
+      let key = VoicevoxWavCache.key(
+        kind: "text",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
+        payload: text
+      )
+      self.speakWav(
+        styleId: styleId, audioSession: audioSession, cacheKey: key, useCache: useCache,
+        promise: promise
+      ) { styleId in
+        try self.synthesizeText(
           text: text,
           styleId: styleId,
-          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+          paramsJson: paramsJson
         )
       }
     }
@@ -241,12 +321,23 @@ public class ExpoVoicevoxModule: Module {
 
     AsyncFunction("speakFromKana") {
       (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool, audioSession: String,
-        promise: Promise) in
-      self.speakWav(styleId: styleId, audioSession: audioSession, promise: promise) { styleId in
-        try self.engine.ttsFromKana(
+        useCache: Bool, paramsJson: String, promise: Promise) in
+      let key = VoicevoxWavCache.key(
+        kind: "kana",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
+        payload: kana
+      )
+      self.speakWav(
+        styleId: styleId, audioSession: audioSession, cacheKey: key, useCache: useCache,
+        promise: promise
+      ) { styleId in
+        try self.synthesizeKana(
           kana: kana,
           styleId: styleId,
-          enableInterrogativeUpspeak: enableInterrogativeUpspeak
+          enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+          paramsJson: paramsJson
         )
       }
     }
@@ -254,13 +345,93 @@ public class ExpoVoicevoxModule: Module {
 
     AsyncFunction("speakFromAudioQuery") {
       (audioQueryJson: String, styleId: Int, enableInterrogativeUpspeak: Bool,
-        audioSession: String, promise: Promise) in
-      self.speakWav(styleId: styleId, audioSession: audioSession, promise: promise) { styleId in
+        audioSession: String, useCache: Bool, promise: Promise) in
+      let key = VoicevoxWavCache.key(
+        kind: "query",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: "",
+        payload: audioQueryJson
+      )
+      self.speakWav(
+        styleId: styleId, audioSession: audioSession, cacheKey: key, useCache: useCache,
+        promise: promise
+      ) { styleId in
         try self.engine.synthesis(
           audioQueryJson: audioQueryJson,
           styleId: styleId,
           enableInterrogativeUpspeak: enableInterrogativeUpspeak
         )
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    // 鳴らさずキャッシュにだけ入れる。押した瞬間に喋らせたい画面で、事前に温めておくための口。
+    AsyncFunction("precacheSpeech") {
+      (text: String, styleId: Int, enableInterrogativeUpspeak: Bool, paramsJson: String) in
+      let key = VoicevoxWavCache.key(
+        kind: "text",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
+        payload: text
+      )
+      let checked = try self.checkedStyleId(styleId)
+      // WAV そのものは JS へ渡さない（ブリッジを数百 KB 通しても使い道が無い）。
+      _ = try self.wrappingErrors {
+        try self.cachedWav(key: key, useCache: true) {
+          try self.synthesizeText(
+            text: text,
+            styleId: checked,
+            enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+            paramsJson: paramsJson
+          )
+        }
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("precacheSpeechFromKana") {
+      (kana: String, styleId: Int, enableInterrogativeUpspeak: Bool, paramsJson: String) in
+      let key = VoicevoxWavCache.key(
+        kind: "kana",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: paramsJson,
+        payload: kana
+      )
+      let checked = try self.checkedStyleId(styleId)
+      _ = try self.wrappingErrors {
+        try self.cachedWav(key: key, useCache: true) {
+          try self.synthesizeKana(
+            kana: kana,
+            styleId: checked,
+            enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+            paramsJson: paramsJson
+          )
+        }
+      }
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("precacheSpeechFromAudioQuery") {
+      (audioQueryJson: String, styleId: Int, enableInterrogativeUpspeak: Bool) in
+      let key = VoicevoxWavCache.key(
+        kind: "query",
+        styleId: styleId,
+        enableInterrogativeUpspeak: enableInterrogativeUpspeak,
+        params: "",
+        payload: audioQueryJson
+      )
+      let checked = try self.checkedStyleId(styleId)
+      _ = try self.wrappingErrors {
+        try self.cachedWav(key: key, useCache: true) {
+          try self.engine.synthesis(
+            audioQueryJson: audioQueryJson,
+            styleId: checked,
+            enableInterrogativeUpspeak: enableInterrogativeUpspeak
+          )
+        }
       }
     }
     .runOnQueue(engineQueue)
@@ -273,11 +444,15 @@ public class ExpoVoicevoxModule: Module {
     AsyncFunction("setUserDictWords") { (words: [VoicevoxUserDictWordRecord]) in
       let converted = try words.map { try self.toUserDictWord($0) }
       try self.wrappingErrors { try self.engine.setUserDictWords(converted) }
+      // 読みが変わるので、捨てないと古い発音のまま鳴ってしまう。
+      self.wavCache.clear()
     }
     .runOnQueue(engineQueue)
 
     AsyncFunction("loadUserDictFile") { (path: String) in
       try self.wrappingErrors { try self.engine.loadUserDictFile(path: path) }
+      // setUserDictWords と同じ理由で捨てる。
+      self.wavCache.clear()
     }
     .runOnQueue(engineQueue)
 
@@ -288,8 +463,85 @@ public class ExpoVoicevoxModule: Module {
 
     AsyncFunction("finalize") {
       self.engine.release()
+      self.wavCache.clear()
     }
     .runOnQueue(engineQueue)
+
+    // engineQueue に載るので合成の実行中は待たされる。同期関数にすると JS スレッドが
+    // 合成の完了まで止まるため、どちらも AsyncFunction のままにしておくこと。
+    AsyncFunction("clearSynthesisCache") {
+      self.wavCache.clear()
+    }
+    .runOnQueue(engineQueue)
+
+    AsyncFunction("getSynthesisCacheStats") { () -> [String: Any] in
+      self.wavCache.statsDictionary
+    }
+    .runOnQueue(engineQueue)
+  }
+
+  /// JS の number を上限バイト数へ直す。
+  ///
+  /// 検証は JS 側にもあるが、ネイティブへ直接来た値で LRU が壊れないようここでも見る。
+  private func cacheLimitBytes(_ raw: Double) throws -> Int {
+    guard raw.isFinite, raw >= 0, let limit = Int(exactly: raw.rounded(.down)) else {
+      throw VoicevoxException("synthesisCacheBytes is out of range: \(raw)")
+    }
+    return limit
+  }
+
+  /// テキストを合成する。engineQueue の上でだけ呼ぶこと。
+  ///
+  /// 合成パラメータの上書きが無ければ `tts` をそのまま使う。あるときだけ AudioQuery を挟む。
+  /// `tts` は「AudioQuery を作って synthesis する」ことの短縮形なので、出力は一致する。
+  private func synthesizeText(
+    text: String,
+    styleId: UInt32,
+    enableInterrogativeUpspeak: Bool,
+    paramsJson: String
+  ) throws -> Data {
+    guard !paramsJson.isEmpty else {
+      return try engine.tts(
+        text: text, styleId: styleId, enableInterrogativeUpspeak: enableInterrogativeUpspeak)
+    }
+    let query = try VoicevoxAudioQueryPatch.apply(
+      paramsJson, to: try engine.createAudioQueryJson(text: text, styleId: styleId))
+    return try engine.synthesis(
+      audioQueryJson: query, styleId: styleId,
+      enableInterrogativeUpspeak: enableInterrogativeUpspeak)
+  }
+
+  /// `synthesizeText` のカナ版。
+  private func synthesizeKana(
+    kana: String,
+    styleId: UInt32,
+    enableInterrogativeUpspeak: Bool,
+    paramsJson: String
+  ) throws -> Data {
+    guard !paramsJson.isEmpty else {
+      return try engine.ttsFromKana(
+        kana: kana, styleId: styleId, enableInterrogativeUpspeak: enableInterrogativeUpspeak)
+    }
+    let query = try VoicevoxAudioQueryPatch.apply(
+      paramsJson, to: try engine.createAudioQueryFromKanaJson(kana: kana, styleId: styleId))
+    return try engine.synthesis(
+      audioQueryJson: query, styleId: styleId,
+      enableInterrogativeUpspeak: enableInterrogativeUpspeak)
+  }
+
+  /// キャッシュを引いてから合成する。engineQueue の上でだけ呼ぶこと。
+  ///
+  /// `useCache` が false のときは読みも書きもしない。一度きりの動的なテキストで LRU を
+  /// 汚さないための逃げ道なので、「読むが書かない」にはしない。
+  private func cachedWav(key: String, useCache: Bool, _ body: () throws -> Data) throws -> Data {
+    if useCache, let hit = wavCache.value(forKey: key) {
+      return hit
+    }
+    let wav = try body()
+    if useCache {
+      wavCache.setValue(wav, forKey: key)
+    }
+    return wav
   }
 
   private func toUserDictWord(_ record: VoicevoxUserDictWordRecord) throws -> UserDictWord {
@@ -334,11 +586,16 @@ public class ExpoVoicevoxModule: Module {
   private func synthesize(
     styleId: Int,
     directory: String,
+    cacheKey: String,
+    useCache: Bool,
     _ body: (UInt32) throws -> Data
   ) throws -> String {
     let styleId = try checkedStyleId(styleId)
     let searchPath = try searchPathDirectory(directory)
-    return try wrappingErrors { try self.writeWav(body(styleId), to: searchPath) }
+    return try wrappingErrors {
+      let wav = try self.cachedWav(key: cacheKey, useCache: useCache) { try body(styleId) }
+      return try self.writeWav(wav, to: searchPath)
+    }
   }
 
   /// 再生系に共通する「engineQueue の上で合成し、再生はその外で始める」流れ。
@@ -348,6 +605,8 @@ public class ExpoVoicevoxModule: Module {
   private func speakWav(
     styleId: Int,
     audioSession: String,
+    cacheKey: String,
+    useCache: Bool,
     promise: Promise,
     _ body: (UInt32) throws -> Data
   ) {
@@ -359,7 +618,9 @@ public class ExpoVoicevoxModule: Module {
       let id = player.begin()
       let wav: Data
       do {
-        wav = try wrappingErrors { try body(styleId) }
+        wav = try wrappingErrors {
+          try self.cachedWav(key: cacheKey, useCache: useCache) { try body(styleId) }
+        }
       } catch {
         // 合成に失敗したら自分の予約だけ畳む。鳴っている音は止めない。
         player.cancel(id: id)
@@ -397,6 +658,9 @@ public class ExpoVoicevoxModule: Module {
       return try VoicevoxAssets.shared.prepare { progress in
         self.sendEvent("onPrepareProgress", progress.dictionary)
       }
+    } catch let error as VoicevoxCancelledException {
+      // 包み直すと文言が変わり、JS の isPrepareAssetsCancelled() が見分けられなくなる。
+      throw error
     } catch {
       throw VoicevoxException(error.localizedDescription)
     }

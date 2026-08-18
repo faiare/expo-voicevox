@@ -6,16 +6,22 @@ import type {
   NormalizedVoicevoxUserDictWord,
   VoicevoxAccentPhrase,
   VoicevoxAssetPaths,
+  VoicevoxAssetStatus,
   VoicevoxAudioQuery,
   VoicevoxAudioSessionMode,
   VoicevoxCharacter,
   VoicevoxInitializeOptions,
   VoicevoxOutputDirectory,
+  VoicevoxPrecacheOptions,
   VoicevoxPrepareProgress,
   VoicevoxSpeakOptions,
   VoicevoxSpeechState,
   VoicevoxSpeechStateChange,
+  VoicevoxSynthesisCacheStats,
   VoicevoxSynthesisOptions,
+  VoicevoxSynthesisParams,
+  VoicevoxTextSpeakOptions,
+  VoicevoxTextSynthesisOptions,
   VoicevoxUserDictWord,
   VoicevoxUserDictWordType,
   VoicevoxUtterance,
@@ -31,6 +37,9 @@ import {
 export * from './ExpoVoicevox.types';
 
 const MAX_CPU_NUM_THREADS = 65535;
+
+/** 合成結果のキャッシュの既定の上限。24kHz モノラル 16bit ≒ 48KB/秒 なので約 11 分ぶん。 */
+const DEFAULT_SYNTHESIS_CACHE_BYTES = 32 * 1024 * 1024;
 
 function assertNonEmptyString(value: unknown, name: string): asserts value is string {
   if (typeof value !== 'string' || value.length === 0) {
@@ -74,6 +83,56 @@ function resolveOutputDirectory(
   return directory;
 }
 
+/**
+ * 合成結果のキャッシュを使うかを解決する。既定は true。
+ *
+ * `enableInterrogativeUpspeak` と同じく、ネイティブの既定値には任せず JS 側が常に明示する。
+ */
+function resolveUseCache(
+  options: VoicevoxSynthesisOptions | VoicevoxSpeakOptions | undefined
+): boolean {
+  return options?.cache ?? true;
+}
+
+/**
+ * `VoicevoxSynthesisParams` の順序。JSON 文字列に固める順番をここで固定する。
+ *
+ * この文字列はネイティブのキャッシュキーの一部になるので、オブジェクトの列挙順に依存させない。
+ */
+const SYNTHESIS_PARAM_KEYS: (keyof VoicevoxSynthesisParams)[] = [
+  'speedScale',
+  'pitchScale',
+  'intonationScale',
+  'volumeScale',
+  'prePhonemeLength',
+  'postPhonemeLength',
+];
+
+/**
+ * 合成パラメータの上書きを JSON 文字列にする。1 つも指定が無ければ空文字。
+ *
+ * 空文字はネイティブ側で「上書き無し」の合図になり、AudioQuery を挟まない速い経路を通る。
+ */
+function resolveSynthesisParams(options: VoicevoxSynthesisParams | undefined): string {
+  if (!options) {
+    return '';
+  }
+  const params: Partial<Record<keyof VoicevoxSynthesisParams, number>> = {};
+  let count = 0;
+  for (const key of SYNTHESIS_PARAM_KEYS) {
+    const value = options[key];
+    if (value === undefined) {
+      continue;
+    }
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`expo-voicevox: ${key} must be a finite number`);
+    }
+    params[key] = value;
+    count += 1;
+  }
+  return count === 0 ? '' : JSON.stringify(params);
+}
+
 /** 再生中のオーディオセッションの扱いを解決する。既定は何も触らない `'none'`。 */
 function resolveAudioSession(options: VoicevoxSpeakOptions | undefined): VoicevoxAudioSessionMode {
   const audioSession = options?.audioSession ?? 'none';
@@ -107,6 +166,46 @@ export function isInitialized(): boolean {
  */
 export function prepareAssets(): Promise<VoicevoxAssetPaths> {
   return ExpoVoicevoxModule.prepareAssets();
+}
+
+/**
+ * アセットの状態を、取得も展開も始めずに読む。
+ *
+ * 「初回起動で 173MB 落とすことになるのか」を `prepareAssets()` を呼ぶ前に知り、確認の画面を
+ * 出すかどうかを決めるために使う。準備の実行中でも待たされず、そのあいだは `ready` が false。
+ *
+ * ```ts
+ * const status = await Voicevox.getAssetStatus();
+ * if (!status.ready && status.assetSource === 'download') {
+ *   // status.downloadBytes を見せて確認を取る
+ * }
+ * ```
+ */
+export function getAssetStatus(): Promise<VoicevoxAssetStatus> {
+  return ExpoVoicevoxModule.getAssetStatus();
+}
+
+/**
+ * 進行中の `prepareAssets()` を中断させる。走っていなければ何もしない。
+ *
+ * 中断されると `prepareAssets()`（および内部で呼んでいる `initialize()`）は reject する。
+ * その理由かどうかは `isPrepareAssetsCancelled()` で見分ける。中途半端に展開されたものは
+ * 残らないので、そのまま `prepareAssets()` を呼び直せる（最初からやり直しになる）。
+ */
+export function cancelPrepareAssets(): Promise<void> {
+  return ExpoVoicevoxModule.cancelPrepareAssets();
+}
+
+/** `cancelPrepareAssets()` による中断かどうか。ネイティブ 2 実装と同じ文言を見ている。 */
+const PREPARE_CANCELLED_REASON = 'the asset preparation was cancelled';
+
+/**
+ * `prepareAssets()` / `initialize()` の reject が `cancelPrepareAssets()` によるものかを返す。
+ *
+ * 中断は「失敗」ではないので、通信エラーと同じ扱いでエラー表示を出さないための判定に使う。
+ */
+export function isPrepareAssetsCancelled(error: unknown): boolean {
+  return error instanceof Error && error.message.includes(PREPARE_CANCELLED_REASON);
 }
 
 /**
@@ -156,11 +255,23 @@ export async function initialize(options: VoicevoxInitializeOptions = {}): Promi
     );
   }
 
+  const synthesisCacheBytes = options.synthesisCacheBytes ?? DEFAULT_SYNTHESIS_CACHE_BYTES;
+  if (
+    !Number.isInteger(synthesisCacheBytes) ||
+    synthesisCacheBytes < 0 ||
+    synthesisCacheBytes > Number.MAX_SAFE_INTEGER
+  ) {
+    throw new Error(
+      'expo-voicevox: synthesisCacheBytes must be an integer between 0 and Number.MAX_SAFE_INTEGER'
+    );
+  }
+
   // 省略されたものは null で渡し、ネイティブ側に自動解決させる。
   await ExpoVoicevoxModule.initialize({
     openJtalkDictDir: openJtalkDictDir ?? null,
     voiceModelPaths: voiceModelPaths ? [...voiceModelPaths] : null,
     cpuNumThreads,
+    synthesisCacheBytes,
   });
 }
 
@@ -201,7 +312,7 @@ export async function getCharacters(): Promise<VoicevoxCharacter[]> {
 export function tts(
   text: string,
   styleId: number,
-  options?: VoicevoxSynthesisOptions
+  options?: VoicevoxTextSynthesisOptions
 ): Promise<string> {
   assertNonEmptyString(text, 'text');
   assertStyleId(styleId);
@@ -209,7 +320,9 @@ export function tts(
     text,
     styleId,
     resolveInterrogativeUpspeak(options),
-    resolveOutputDirectory(options)
+    resolveOutputDirectory(options),
+    resolveUseCache(options),
+    resolveSynthesisParams(options)
   );
 }
 
@@ -221,7 +334,7 @@ export function tts(
 export function ttsFromKana(
   kana: string,
   styleId: number,
-  options?: VoicevoxSynthesisOptions
+  options?: VoicevoxTextSynthesisOptions
 ): Promise<string> {
   assertNonEmptyString(kana, 'kana');
   assertStyleId(styleId);
@@ -229,7 +342,9 @@ export function ttsFromKana(
     kana,
     styleId,
     resolveInterrogativeUpspeak(options),
-    resolveOutputDirectory(options)
+    resolveOutputDirectory(options),
+    resolveUseCache(options),
+    resolveSynthesisParams(options)
   );
 }
 
@@ -351,7 +466,8 @@ export function synthesis(
     stringifyAudioQuery(audioQuery),
     styleId,
     resolveInterrogativeUpspeak(options),
-    resolveOutputDirectory(options)
+    resolveOutputDirectory(options),
+    resolveUseCache(options)
   );
 }
 
@@ -465,14 +581,21 @@ async function trackedSpeak(call: () => Promise<VoicevoxUtterance>): Promise<Voi
 export function speak(
   text: string,
   styleId: number,
-  options?: VoicevoxSpeakOptions
+  options?: VoicevoxTextSpeakOptions
 ): Promise<VoicevoxUtterance> {
   assertNonEmptyString(text, 'text');
   assertStyleId(styleId);
   const enableInterrogativeUpspeak = resolveInterrogativeUpspeak(options);
   const audioSession = resolveAudioSession(options);
   return trackedSpeak(() =>
-    ExpoVoicevoxModule.speak(text, styleId, enableInterrogativeUpspeak, audioSession)
+    ExpoVoicevoxModule.speak(
+      text,
+      styleId,
+      enableInterrogativeUpspeak,
+      audioSession,
+      resolveUseCache(options),
+      resolveSynthesisParams(options)
+    )
   );
 }
 
@@ -480,14 +603,21 @@ export function speak(
 export function speakFromKana(
   kana: string,
   styleId: number,
-  options?: VoicevoxSpeakOptions
+  options?: VoicevoxTextSpeakOptions
 ): Promise<VoicevoxUtterance> {
   assertNonEmptyString(kana, 'kana');
   assertStyleId(styleId);
   const enableInterrogativeUpspeak = resolveInterrogativeUpspeak(options);
   const audioSession = resolveAudioSession(options);
   return trackedSpeak(() =>
-    ExpoVoicevoxModule.speakFromKana(kana, styleId, enableInterrogativeUpspeak, audioSession)
+    ExpoVoicevoxModule.speakFromKana(
+      kana,
+      styleId,
+      enableInterrogativeUpspeak,
+      audioSession,
+      resolveUseCache(options),
+      resolveSynthesisParams(options)
+    )
   );
 }
 
@@ -511,8 +641,67 @@ export function speakFromAudioQuery(
       audioQueryJson,
       styleId,
       enableInterrogativeUpspeak,
-      audioSession
+      audioSession,
+      resolveUseCache(options)
     )
+  );
+}
+
+/**
+ * 鳴らさずに合成だけ済ませ、キャッシュへ入れておく。
+ *
+ * ボタンを押した瞬間に喋り出してほしい画面で、先に温めておくために使う。すでにキャッシュに
+ * あるなら何もしない。合成用の直列キューの上で動くので、他の合成の実行中に呼ぶと待たされる。
+ *
+ * `initialize()` の `synthesisCacheBytes` を `0` にしてキャッシュを切っている場合、この関数は
+ * 合成して捨てるだけになる（呼ぶ意味が無い）。
+ */
+export function precacheSpeech(
+  text: string,
+  styleId: number,
+  options?: VoicevoxPrecacheOptions
+): Promise<void> {
+  assertNonEmptyString(text, 'text');
+  assertStyleId(styleId);
+  return ExpoVoicevoxModule.precacheSpeech(
+    text,
+    styleId,
+    resolveInterrogativeUpspeak(options),
+    resolveSynthesisParams(options)
+  );
+}
+
+/** AquesTalk 風記法のカナを先に合成しておく。挙動は `precacheSpeech()` と同じ。 */
+export function precacheSpeechFromKana(
+  kana: string,
+  styleId: number,
+  options?: VoicevoxPrecacheOptions
+): Promise<void> {
+  assertNonEmptyString(kana, 'kana');
+  assertStyleId(styleId);
+  return ExpoVoicevoxModule.precacheSpeechFromKana(
+    kana,
+    styleId,
+    resolveInterrogativeUpspeak(options),
+    resolveSynthesisParams(options)
+  );
+}
+
+/**
+ * AudioQuery を先に合成しておく。挙動は `precacheSpeech()` と同じ。
+ *
+ * AudioQuery 自体がパラメータを持っているので、`VoicevoxSynthesisParams` は受け取らない。
+ */
+export function precacheSpeechFromAudioQuery(
+  audioQuery: VoicevoxAudioQuery,
+  styleId: number,
+  options?: { enableInterrogativeUpspeak?: boolean }
+): Promise<void> {
+  assertStyleId(styleId);
+  return ExpoVoicevoxModule.precacheSpeechFromAudioQuery(
+    stringifyAudioQuery(audioQuery),
+    styleId,
+    resolveInterrogativeUpspeak(options)
   );
 }
 
@@ -662,6 +851,28 @@ export function saveUserDictFile(path: string): Promise<void> {
 export async function finalize(): Promise<void> {
   await ExpoVoicevoxModule.stopSpeaking();
   await ExpoVoicevoxModule.finalize();
+}
+
+/**
+ * 合成結果のキャッシュを空にする。上限（`initialize()` の `synthesisCacheBytes`）は保たれる。
+ *
+ * `initialize()` / `finalize()` / `setUserDictWords()` / `loadUserDictFile()` では自動で空になるので、
+ * 通常は呼ぶ必要が無い。メモリを取り戻したいときに使う（React Native の `AppState` が出す
+ * `'memoryWarning'` に繋ぐのが分かりやすい）。
+ *
+ * 合成用の直列キューの上で動くので、合成の実行中に呼ぶとその完了まで待たされる。
+ */
+export function clearSynthesisCache(): Promise<void> {
+  return ExpoVoicevoxModule.clearSynthesisCache();
+}
+
+/**
+ * 合成結果のキャッシュの状態を返す。上限の調整や、当たっているかの確認に使う。
+ *
+ * `clearSynthesisCache()` と同じく合成用の直列キューの上で動く。
+ */
+export function getSynthesisCacheStats(): Promise<VoicevoxSynthesisCacheStats> {
+  return ExpoVoicevoxModule.getSynthesisCacheStats();
 }
 
 export default ExpoVoicevoxModule;

@@ -2,9 +2,11 @@ import { NativeModule, requireNativeModule } from 'expo';
 
 import type {
   ExpoVoicevoxModuleEvents,
+  VoicevoxAssetStatus,
   NormalizedVoicevoxInitializeOptions,
   NormalizedVoicevoxUserDictWord,
   VoicevoxAssetPaths,
+  VoicevoxSynthesisCacheStats,
   VoicevoxUtterance,
 } from './ExpoVoicevox.types';
 
@@ -20,6 +22,10 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
    * iOS の bundle モードではアプリのバンドルをそのまま読むので即座に返る。冪等。
    */
   prepareAssets(): Promise<VoicevoxAssetPaths>;
+  /** 取得も展開も始めずに読める範囲のアセットの状態を返す。 */
+  getAssetStatus(): Promise<VoicevoxAssetStatus>;
+  /** 進行中の `prepareAssets()` を中断させる。走っていなければ何もしない。 */
+  cancelPrepareAssets(): Promise<void>;
   /** ONNX Runtime・OpenJTalk・Synthesizer を用意し、音声モデルを読み込む。 */
   initialize(options: NormalizedVoicevoxInitializeOptions): Promise<void>;
   /**
@@ -33,14 +39,18 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
     text: string,
     styleId: number,
     enableInterrogativeUpspeak: boolean,
-    directory: string
+    directory: string,
+    useCache: boolean,
+    paramsJson: string
   ): Promise<string>;
   /** AquesTalk 風記法のカナを合成し、書き出した WAV ファイルの絶対パスを返す。 */
   ttsFromKana(
     kana: string,
     styleId: number,
     enableInterrogativeUpspeak: boolean,
-    directory: string
+    directory: string,
+    useCache: boolean,
+    paramsJson: string
   ): Promise<string>;
   /**
    * テキストから AudioQuery を生成し、voicevox-core の JSON 文字列のまま返す。
@@ -68,7 +78,8 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
     audioQueryJson: string,
     styleId: number,
     enableInterrogativeUpspeak: boolean,
-    directory: string
+    directory: string,
+    useCache: boolean
   ): Promise<string>;
   /**
    * テキストを合成し、WAV をファイルにせずそのまま再生する。
@@ -80,22 +91,47 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
     text: string,
     styleId: number,
     enableInterrogativeUpspeak: boolean,
-    audioSession: string
+    audioSession: string,
+    useCache: boolean,
+    paramsJson: string
   ): Promise<VoicevoxUtterance>;
   /** AquesTalk 風記法のカナを合成し、そのまま再生する。 */
   speakFromKana(
     kana: string,
     styleId: number,
     enableInterrogativeUpspeak: boolean,
-    audioSession: string
+    audioSession: string,
+    useCache: boolean,
+    paramsJson: string
   ): Promise<VoicevoxUtterance>;
   /** AudioQuery の JSON を合成し、そのまま再生する。 */
   speakFromAudioQuery(
     audioQueryJson: string,
     styleId: number,
     enableInterrogativeUpspeak: boolean,
-    audioSession: string
+    audioSession: string,
+    useCache: boolean
   ): Promise<VoicevoxUtterance>;
+  /** 鳴らさずに合成だけ済ませ、キャッシュへ入れる。 */
+  precacheSpeech(
+    text: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean,
+    paramsJson: string
+  ): Promise<void>;
+  /** `precacheSpeech` のカナ版。 */
+  precacheSpeechFromKana(
+    kana: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean,
+    paramsJson: string
+  ): Promise<void>;
+  /** `precacheSpeech` の AudioQuery 版。 */
+  precacheSpeechFromAudioQuery(
+    audioQueryJson: string,
+    styleId: number,
+    enableInterrogativeUpspeak: boolean
+  ): Promise<void>;
   /** 再生中の発話を止める。合成中の発話も鳴らさずに終わらせる。 */
   stopSpeaking(): Promise<void>;
   /** 音が鳴っているか。合成中はまだ false。 */
@@ -108,6 +144,10 @@ declare class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> 
   saveUserDictFile(path: string): Promise<void>;
   /** Synthesizer を破棄する。再度使うには `initialize()` が必要。 */
   finalize(): Promise<void>;
+  /** 合成結果のキャッシュを空にする。上限の設定は保たれる。 */
+  clearSynthesisCache(): Promise<void>;
+  /** 合成結果のキャッシュの状態を返す。 */
+  getSynthesisCacheStats(): Promise<VoicevoxSynthesisCacheStats>;
 }
 
 export default requireNativeModule<ExpoVoicevoxModule>('ExpoVoicevox');

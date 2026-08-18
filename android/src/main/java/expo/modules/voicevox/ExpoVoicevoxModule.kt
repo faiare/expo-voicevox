@@ -22,6 +22,13 @@ class VoicevoxInitializeOptions : Record {
   @Field val voiceModelPaths: List<String>? = null
 
   @Field val cpuNumThreads: Int = 0
+
+  /**
+   * 合成結果のキャッシュに使う上限バイト数。0 で無効。
+   *
+   * Int で受けると 2GB を超える指定が無言で壊れるので、JS の number をそのまま Double で受ける。
+   */
+  @Field val synthesisCacheBytes: Double = VoicevoxWavCache.DEFAULT_LIMIT_BYTES.toDouble()
 }
 
 /** ユーザー辞書へ登録する単語。既定値は JS 側で埋まっている。 */
@@ -40,14 +47,34 @@ class VoicevoxUserDictWordRecord : Record {
 /** voicevox-core 由来のエラーを JS へ伝えるための例外。 */
 class VoicevoxException(message: String, cause: Throwable? = null) : CodedException(message, cause)
 
+/**
+ * `cancelPrepareAssets()` で中断されたときに `prepareAssets()` が投げる例外。
+ *
+ * メッセージの文言は JS の `isPrepareAssetsCancelled()` と iOS 側の
+ * `VoicevoxCancelledException` が一致していることに依存している。変えるときは 3 箇所とも直すこと。
+ */
+class VoicevoxCancelledException :
+  CodedException("the asset preparation was cancelled", null)
+
 class ExpoVoicevoxModule : Module() {
   private val engine = VoicevoxEngine()
 
   /** voicevox-core の Synthesizer は同時実行できないので、重い処理はこのロックで直列化する。 */
   private val engineLock = Any()
 
-  /** config plugin が配置したアセットの解決役。reactContext が要るので遅延生成する。 */
-  private var assets: VoicevoxAssets? = null
+  /** 合成結果の LRU キャッシュ。[engineLock] の内側でだけ触るので、自前のロックは持たない。 */
+  private val wavCache = VoicevoxWavCache()
+
+  /**
+   * config plugin が配置したアセットの解決役。reactContext が要るので遅延生成する。
+   *
+   * `getAssetStatus` / `cancelPrepareAssets` が engineLock を取らずに触るので `@Volatile`。
+   * 生成は [assetsInitLock] で守る（engineLock を使うと準備の完了まで待たされ、
+   * 中断そのものができなくなる）。
+   */
+  @Volatile private var assets: VoicevoxAssets? = null
+
+  private val assetsInitLock = Any()
 
   /**
    * 再生役。reactContext が要るので assets と同じく遅延生成する。
@@ -67,7 +94,10 @@ class ExpoVoicevoxModule : Module() {
     OnDestroy {
       // 停止は engineLock に依存しないので先に済ませる（合成の実行中でも即座に黙る）。
       player?.release()
-      synchronized(engineLock) { engine.release() }
+      synchronized(engineLock) {
+        engine.release()
+        wavCache.clear()
+      }
     }
 
     Function("getVersion") { GlobalInfo.getVersion() }
@@ -87,6 +117,13 @@ class ExpoVoicevoxModule : Module() {
       }
     }
 
+    // 取得も展開も始めずに読むだけなので engineLock は取らない
+    // （準備の実行中でも「まだ ready でない」と即座に返せる）。
+    AsyncFunction("getAssetStatus") { requireAssets().status().toResultMap() }
+
+    // 準備の実行中に呼ばれる API なので、engineLock を取ってはいけない（取ると自分が待たされる）。
+    AsyncFunction("cancelPrepareAssets") { assets?.cancel() }
+
     AsyncFunction("initialize") { options: VoicevoxInitializeOptions ->
       synchronized(engineLock) {
         // 明示パスが両方そろっているときはアセットの準備を一切走らせない
@@ -104,6 +141,7 @@ class ExpoVoicevoxModule : Module() {
           modelPaths = explicitModels ?: prepared.voiceModelPaths
         }
 
+        val limitBytes = cacheLimitBytes(options.synthesisCacheBytes)
         runWrappingErrors("failed to initialize voicevox-core") {
           engine.initialize(
             openJtalkDictDir = dictDir,
@@ -111,6 +149,9 @@ class ExpoVoicevoxModule : Module() {
             cpuNumThreads = options.cpuNumThreads
           )
         }
+        // 読み込むモデルが変わりうるので、初期化のたびに作り直す。
+        wavCache.limitBytes = limitBytes
+        wavCache.clear()
       }
     }
 
@@ -124,12 +165,19 @@ class ExpoVoicevoxModule : Module() {
       text: String,
       styleId: Int,
       enableInterrogativeUpspeak: Boolean,
-      directory: String ->
-      // 書き出し先の検証はロックの外で済ませる。
+      directory: String,
+      useCache: Boolean,
+      paramsJson: String ->
+      // 書き出し先の検証とキーの組み立てはロックの外で済ませる。
       val outputDir = outputDirectory(directory)
+      val key = VoicevoxWavCache.key("text", styleId, enableInterrogativeUpspeak, paramsJson, text)
       synchronized(engineLock) {
         runWrappingErrors("speech synthesis failed") {
-          writeWav(engine.tts(text, styleId, enableInterrogativeUpspeak), outputDir)
+          val wav =
+            cachedWav(key, useCache) {
+              synthesizeText(text, styleId, enableInterrogativeUpspeak, paramsJson)
+            }
+          writeWav(wav, outputDir)
         }
       }
     }
@@ -138,11 +186,18 @@ class ExpoVoicevoxModule : Module() {
       kana: String,
       styleId: Int,
       enableInterrogativeUpspeak: Boolean,
-      directory: String ->
+      directory: String,
+      useCache: Boolean,
+      paramsJson: String ->
       val outputDir = outputDirectory(directory)
+      val key = VoicevoxWavCache.key("kana", styleId, enableInterrogativeUpspeak, paramsJson, kana)
       synchronized(engineLock) {
         runWrappingErrors("speech synthesis failed") {
-          writeWav(engine.ttsFromKana(kana, styleId, enableInterrogativeUpspeak), outputDir)
+          val wav =
+            cachedWav(key, useCache) {
+              synthesizeKana(kana, styleId, enableInterrogativeUpspeak, paramsJson)
+            }
+          writeWav(wav, outputDir)
         }
       }
     }
@@ -214,11 +269,17 @@ class ExpoVoicevoxModule : Module() {
       audioQueryJson: String,
       styleId: Int,
       enableInterrogativeUpspeak: Boolean,
-      directory: String ->
+      directory: String,
+      useCache: Boolean ->
       val outputDir = outputDirectory(directory)
+      val key = VoicevoxWavCache.key("query", styleId, enableInterrogativeUpspeak, "", audioQueryJson)
       synchronized(engineLock) {
         runWrappingErrors("speech synthesis failed") {
-          writeWav(engine.synthesis(audioQueryJson, styleId, enableInterrogativeUpspeak), outputDir)
+          val wav =
+            cachedWav(key, useCache) {
+              engine.synthesis(audioQueryJson, styleId, enableInterrogativeUpspeak)
+            }
+          writeWav(wav, outputDir)
         }
       }
     }
@@ -228,8 +289,13 @@ class ExpoVoicevoxModule : Module() {
       styleId: Int,
       enableInterrogativeUpspeak: Boolean,
       audioSession: String,
+      useCache: Boolean,
+      paramsJson: String,
       promise: Promise ->
-      speakWav(audioSession, promise) { engine.tts(text, styleId, enableInterrogativeUpspeak) }
+      val key = VoicevoxWavCache.key("text", styleId, enableInterrogativeUpspeak, paramsJson, text)
+      speakWav(key, useCache, audioSession, promise) {
+        synthesizeText(text, styleId, enableInterrogativeUpspeak, paramsJson)
+      }
     }
 
     AsyncFunction("speakFromKana") {
@@ -237,9 +303,12 @@ class ExpoVoicevoxModule : Module() {
       styleId: Int,
       enableInterrogativeUpspeak: Boolean,
       audioSession: String,
+      useCache: Boolean,
+      paramsJson: String,
       promise: Promise ->
-      speakWav(audioSession, promise) {
-        engine.ttsFromKana(kana, styleId, enableInterrogativeUpspeak)
+      val key = VoicevoxWavCache.key("kana", styleId, enableInterrogativeUpspeak, paramsJson, kana)
+      speakWav(key, useCache, audioSession, promise) {
+        synthesizeKana(kana, styleId, enableInterrogativeUpspeak, paramsJson)
       }
     }
 
@@ -248,9 +317,57 @@ class ExpoVoicevoxModule : Module() {
       styleId: Int,
       enableInterrogativeUpspeak: Boolean,
       audioSession: String,
+      useCache: Boolean,
       promise: Promise ->
-      speakWav(audioSession, promise) {
+      val key = VoicevoxWavCache.key("query", styleId, enableInterrogativeUpspeak, "", audioQueryJson)
+      speakWav(key, useCache, audioSession, promise) {
         engine.synthesis(audioQueryJson, styleId, enableInterrogativeUpspeak)
+      }
+    }
+
+    // 鳴らさずキャッシュにだけ入れる。押した瞬間に喋らせたい画面で、事前に温めておくための口。
+    AsyncFunction("precacheSpeech") {
+      text: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean,
+      paramsJson: String ->
+      val key = VoicevoxWavCache.key("text", styleId, enableInterrogativeUpspeak, paramsJson, text)
+      synchronized(engineLock) {
+        runWrappingErrors("speech synthesis failed") {
+          cachedWav(key, true) {
+            synthesizeText(text, styleId, enableInterrogativeUpspeak, paramsJson)
+          }
+        }
+      }
+      // WAV そのものは JS へ渡さない（ブリッジを数百 KB 通しても使い道が無い）。
+    }
+
+    AsyncFunction("precacheSpeechFromKana") {
+      kana: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean,
+      paramsJson: String ->
+      val key = VoicevoxWavCache.key("kana", styleId, enableInterrogativeUpspeak, paramsJson, kana)
+      synchronized(engineLock) {
+        runWrappingErrors("speech synthesis failed") {
+          cachedWav(key, true) {
+            synthesizeKana(kana, styleId, enableInterrogativeUpspeak, paramsJson)
+          }
+        }
+      }
+    }
+
+    AsyncFunction("precacheSpeechFromAudioQuery") {
+      audioQueryJson: String,
+      styleId: Int,
+      enableInterrogativeUpspeak: Boolean ->
+      val key = VoicevoxWavCache.key("query", styleId, enableInterrogativeUpspeak, "", audioQueryJson)
+      synchronized(engineLock) {
+        runWrappingErrors("speech synthesis failed") {
+          cachedWav(key, true) {
+            engine.synthesis(audioQueryJson, styleId, enableInterrogativeUpspeak)
+          }
+        }
       }
     }
 
@@ -263,12 +380,16 @@ class ExpoVoicevoxModule : Module() {
         runWrappingErrors("failed to update the user dictionary") {
           engine.setUserDictWords(converted)
         }
+        // 読みが変わるので、捨てないと古い発音のまま鳴ってしまう。
+        wavCache.clear()
       }
     }
 
     AsyncFunction("loadUserDictFile") { path: String ->
       synchronized(engineLock) {
         runWrappingErrors("failed to load the user dictionary") { engine.loadUserDictFile(path) }
+        // setUserDictWords と同じ理由で捨てる。
+        wavCache.clear()
       }
     }
 
@@ -278,7 +399,86 @@ class ExpoVoicevoxModule : Module() {
       }
     }
 
-    AsyncFunction("finalize") { synchronized(engineLock) { engine.release() } }
+    AsyncFunction("finalize") {
+      synchronized(engineLock) {
+        engine.release()
+        wavCache.clear()
+      }
+    }
+
+    // engineLock を取るので合成の実行中は待たされる。同期関数にすると JS スレッドが
+    // 合成の完了まで止まるため、どちらも AsyncFunction のままにしておくこと。
+    AsyncFunction("clearSynthesisCache") { synchronized(engineLock) { wavCache.clear() } }
+
+    AsyncFunction("getSynthesisCacheStats") { synchronized(engineLock) { wavCache.toStatsMap() } }
+  }
+
+  /**
+   * JS の number を上限バイト数へ直す。
+   *
+   * 検証は JS 側にもあるが、ネイティブへ直接来た値で LRU が壊れないようここでも見る。
+   */
+  private fun cacheLimitBytes(raw: Double): Long {
+    if (!raw.isFinite() || raw < 0 || raw > Long.MAX_VALUE.toDouble()) {
+      throw VoicevoxException("synthesisCacheBytes is out of range: $raw")
+    }
+    return raw.toLong()
+  }
+
+  /**
+   * テキストを合成する。[engineLock] を握った状態で呼ぶこと。
+   *
+   * 合成パラメータの上書きが無ければ `tts` をそのまま使う。あるときだけ AudioQuery を挟む。
+   * `tts` は「AudioQuery を作って synthesis する」ことの短縮形なので、出力は一致する。
+   */
+  private fun synthesizeText(
+    text: String,
+    styleId: Int,
+    enableInterrogativeUpspeak: Boolean,
+    paramsJson: String
+  ): ByteArray {
+    if (paramsJson.isEmpty()) {
+      return engine.tts(text, styleId, enableInterrogativeUpspeak)
+    }
+    val query = VoicevoxAudioQueryPatch.apply(engine.createAudioQueryJson(text, styleId), paramsJson)
+    return engine.synthesis(query, styleId, enableInterrogativeUpspeak)
+  }
+
+  /** [synthesizeText] のカナ版。 */
+  private fun synthesizeKana(
+    kana: String,
+    styleId: Int,
+    enableInterrogativeUpspeak: Boolean,
+    paramsJson: String
+  ): ByteArray {
+    if (paramsJson.isEmpty()) {
+      return engine.ttsFromKana(kana, styleId, enableInterrogativeUpspeak)
+    }
+    val query =
+      VoicevoxAudioQueryPatch.apply(
+        engine.createAudioQueryFromKanaJson(kana, styleId),
+        paramsJson
+      )
+    return engine.synthesis(query, styleId, enableInterrogativeUpspeak)
+  }
+
+  /**
+   * キャッシュを引いてから合成する。[engineLock] を握った状態で呼ぶこと。
+   *
+   * `useCache` が false のときは読みも書きもしない。一度きりの動的なテキストで LRU を
+   * 汚さないための逃げ道なので、「読むが書かない」にはしない。
+   */
+  private fun cachedWav(key: String, useCache: Boolean, synthesize: () -> ByteArray): ByteArray {
+    if (useCache) {
+      wavCache.get(key)?.let {
+        return it
+      }
+    }
+    val wav = synthesize()
+    if (useCache) {
+      wavCache.put(key, wav)
+    }
+    return wav
   }
 
   private fun toVoicevoxWord(record: VoicevoxUserDictWordRecord): VoicevoxWord {
@@ -303,15 +503,27 @@ class ExpoVoicevoxModule : Module() {
   }
 
   /** config plugin が配置したアセットを使える状態にする。進捗は JS へイベントで流す。 */
-  private fun prepareAssets(): VoicevoxAssetPaths {
-    val context =
-      appContext.reactContext
-        ?: throw VoicevoxException("the Android context is not available yet")
-    val resolver = assets ?: VoicevoxAssets(context).also { assets = it }
-    return runWrappingErrors("failed to prepare the voicevox assets") {
-      resolver.prepare { progress -> sendEvent("onPrepareProgress", progress.toEventMap()) }
+  private fun prepareAssets(): VoicevoxAssetPaths =
+    runWrappingErrors("failed to prepare the voicevox assets") {
+      requireAssets().prepare { progress -> sendEvent("onPrepareProgress", progress.toEventMap()) }
     }
-  }
+
+  /**
+   * アセットの解決役を用意する。reactContext が要るので遅延生成する。
+   *
+   * AsyncFunction は同時に走りうるので、二重生成しないようロックの中で作る。取り逃すと
+   * `cancelPrepareAssets` が別のインスタンスへ中断を伝えてしまい、何も止まらない。
+   */
+  private fun requireAssets(): VoicevoxAssets =
+    synchronized(assetsInitLock) {
+      assets?.let {
+        return it
+      }
+      val context =
+        appContext.reactContext
+          ?: throw VoicevoxException("the Android context is not available yet")
+      VoicevoxAssets(context).also { assets = it }
+    }
 
   /**
    * voicevox-core の型付き例外をそのまま JS へ流すと種類が多すぎるので、
@@ -359,7 +571,13 @@ class ExpoVoicevoxModule : Module() {
    * 再生の完了をロックの中で待つと、鳴っているあいだ次の合成を始められない。
    * `VoicevoxPlayer.play` は専用スレッドを起こして即座に戻る。
    */
-  private fun speakWav(audioSession: String, promise: Promise, synthesize: () -> ByteArray) {
+  private fun speakWav(
+    key: String,
+    useCache: Boolean,
+    audioSession: String,
+    promise: Promise,
+    synthesize: () -> ByteArray
+  ) {
     try {
       val mode =
         VoicevoxAudioSessionMode.parse(audioSession)
@@ -369,7 +587,7 @@ class ExpoVoicevoxModule : Module() {
       val wav =
         try {
           synchronized(engineLock) {
-            runWrappingErrors("speech synthesis failed") { synthesize() }
+            runWrappingErrors("speech synthesis failed") { cachedWav(key, useCache, synthesize) }
           }
         } catch (error: Throwable) {
           // 合成に失敗したら自分の予約だけ畳む。鳴っている音は止めない。

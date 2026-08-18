@@ -225,6 +225,99 @@ playback. Keep `'none'` if something else owns the audio session.
 There is no pause, resume or volume control — only `stopSpeaking()`. One `speak()` is one synthesis
 and one playback; long text is not split into sentences and streamed.
 
+### Changing speed and timing without an AudioQuery
+
+`speak()`, `speakFromKana()`, `tts()` and `ttsFromKana()` take the common AudioQuery fields
+directly, so you don't have to go through `createAudioQuery()` for the usual adjustments:
+
+```ts
+await Voicevox.speak('こんにちは', 3, {
+  speedScale: 1.1,        // faster
+  prePhonemeLength: 0,    // start speaking immediately
+});
+```
+
+`speedScale`, `pitchScale`, `intonationScale`, `volumeScale`, `prePhonemeLength` and
+`postPhonemeLength` are accepted. Passing any of them makes the native side build an AudioQuery,
+apply the overrides and synthesize from it — which is exactly what `tts()` does internally, so the
+audio is identical. The extra step is Open JTalk's linguistic analysis only, no acoustic inference,
+so it costs tens of milliseconds and it is skipped entirely on a cache hit.
+
+`prePhonemeLength` and `postPhonemeLength` default to 0.1 s each. Dropping the leading one to `0`
+is the cheapest way to make short prompts feel immediate.
+
+`speakFromAudioQuery()` and `synthesis()` do not take these — the AudioQuery you pass already
+carries them. For anything finer (per-accent-phrase or per-mora edits) use `createAudioQuery()`
+and `synthesis()` / `speakFromAudioQuery()`.
+
+### Reusing synthesized audio
+
+Synthesis is the expensive part — hundreds of milliseconds to several seconds on a phone. The same
+request is therefore synthesized only once: the WAV is kept in an in-memory LRU cache and replayed
+straight from there. This applies to every synthesis entry point, `speak()` and `tts()` alike.
+
+A request is "the same" when the kind (text / kana / AudioQuery), the payload, the `styleId`,
+`enableInterrogativeUpspeak` and the synthesis parameters above all match. `directory` is not part
+of the key — `tts()` still writes a fresh file and returns a new path on every call, it just skips
+the inference.
+
+The cache is bounded by total bytes, not by entry count. The default is 32 MB, which is roughly
+11 minutes of audio at the 24 kHz mono 16-bit voicevox-core produces:
+
+```ts
+await Voicevox.initialize({ synthesisCacheBytes: 8 * 1024 * 1024 }); // 8 MB
+await Voicevox.initialize({ synthesisCacheBytes: 0 });               // disabled
+```
+
+The limit is set by `initialize()` and the cache is emptied there, so pass the value every time.
+A single WAV larger than the limit is never stored, so one long utterance can't evict everything
+else.
+
+The cache is also emptied by `finalize()`, `setUserDictWords()` and `loadUserDictFile()` — changing
+the dictionary changes pronunciations, and stale audio would keep the old reading. Call
+`clearSynthesisCache()` to empty it yourself, and `getSynthesisCacheStats()` to see how it is doing:
+
+```ts
+const { entryCount, bytes, limitBytes, hits, misses } = await Voicevox.getSynthesisCacheStats();
+```
+
+Both run on the synthesis queue, so they wait for an in-flight synthesis to finish.
+
+To reclaim the memory under pressure, hook up React Native's `AppState`:
+
+```ts
+AppState.addEventListener('memoryWarning', () => {
+  Voicevox.clearSynthesisCache();
+});
+```
+
+For one-off text that would only push out audio you want to keep, opt out per call. `cache: false`
+neither reads nor writes — it always synthesizes anew and stores nothing:
+
+```ts
+await Voicevox.speak(`${userName}さん、こんにちは`, 3, { cache: false });
+```
+
+### Warming the cache up front
+
+When a tap has to be answered by speech immediately, synthesize ahead of time.
+`precacheSpeech()` runs the synthesis and stores it in the cache without playing anything or
+writing a file, so the later `speak()` starts at once:
+
+```ts
+useEffect(() => {
+  Voicevox.precacheSpeech('保存しました', 3, { speedScale: 1.1 });
+}, []);
+
+// later, on tap
+await Voicevox.speak('保存しました', 3, { speedScale: 1.1 }); // no inference
+```
+
+Pass the *same* options you will pass to `speak()` — the cache key includes them, so
+precaching with `speedScale: 1.1` does nothing for a `speak()` without it. There are
+`precacheSpeechFromKana()` and `precacheSpeechFromAudioQuery()` too. All three run on the
+synthesis queue, so they queue up behind an in-flight synthesis instead of competing with it.
+
 ### Where WAV files are written
 
 `tts()`, `ttsFromKana()` and `synthesis()` write a file and return its absolute path. Pick the
@@ -323,6 +416,40 @@ useEffect(() => {
 }, []);
 ```
 
+### Checking and cancelling asset preparation
+
+`getAssetStatus()` answers "is this ready, and if not, how much will it fetch?" without starting
+any download or extraction. It never blocks — call it while preparation is running and you get
+`ready: false` right away.
+
+```ts
+const status = await Voicevox.getAssetStatus();
+if (!status.configured) {
+  // the config plugin is not set up, or you have to pass paths to initialize() yourself
+} else if (!status.ready && status.assetSource === 'download') {
+  // ask before spending status.downloadBytes on mobile data
+}
+```
+
+`cancelPrepareAssets()` stops a preparation that is already running. The pending `prepareAssets()`
+(or the `initialize()` that triggered it) rejects; use `isPrepareAssetsCancelled()` so a
+deliberate cancellation isn't reported as a failure:
+
+```ts
+try {
+  await Voicevox.prepareAssets();
+} catch (error) {
+  if (!Voicevox.isPrepareAssetsCancelled(error)) throw error;
+}
+```
+
+Nothing half-extracted is left behind — the work happens in a staging directory that is removed on
+cancellation — so calling `prepareAssets()` again simply starts over. Cancelling when nothing is
+running is a no-op, and it does not affect the next `prepareAssets()`.
+
+`assetSource: "bundle"` on iOS reads the app bundle in place, so preparation is instantaneous and
+there is nothing to cancel.
+
 ### Managing assets yourself
 
 Passing absolute paths to `initialize()` bypasses the config plugin entirely — nothing is downloaded
@@ -346,6 +473,9 @@ dictionary.
 | `getVersion()` | sync | voicevox_core version |
 | `isInitialized()` | sync | Whether `initialize()` has completed |
 | `prepareAssets()` | async | Makes assets available and returns their absolute paths. Idempotent |
+| `getAssetStatus()` | async | Whether the assets are ready, and how much a download would fetch. Starts nothing |
+| `cancelPrepareAssets()` | async | Stops a running `prepareAssets()`. No-op when nothing is running |
+| `isPrepareAssetsCancelled(error)` | sync | Whether a rejection came from `cancelPrepareAssets()` |
 | `addPrepareProgressListener(cb)` | sync | Subscribes to asset preparation progress |
 | `initialize(options?)` | async | Sets up ONNX Runtime, OpenJTalk and the synthesizer, and loads the voice models |
 | `getCharacters()` | async | Characters and styles in the loaded models |
@@ -357,6 +487,9 @@ dictionary.
 | `speak(text, styleId, options?)` | async | Synthesizes text and plays it back without writing a file |
 | `speakFromKana(kana, styleId, options?)` | async | Same, from AquesTalk-style kana |
 | `speakFromAudioQuery(audioQuery, styleId, options?)` | async | Same, from an AudioQuery |
+| `precacheSpeech(text, styleId, options?)` | async | Synthesizes into the cache without playing or writing a file |
+| `precacheSpeechFromKana(kana, styleId, options?)` | async | Same, from AquesTalk-style kana |
+| `precacheSpeechFromAudioQuery(audioQuery, styleId, options?)` | async | Same, from an AudioQuery |
 | `stopSpeaking()` | async | Stops playback, and cancels an utterance still being synthesized |
 | `isSpeaking()` | sync | Whether audio is currently playing |
 | `waitForSpeech(id)` | async | Waits for an utterance to end and returns how it ended |
@@ -371,6 +504,8 @@ dictionary.
 | `loadUserDictFile(path)` | async | Loads a VOICEVOX-format dictionary file and merges it into the current one |
 | `saveUserDictFile(path)` | async | Saves the current user dictionary to a file |
 | `finalize()` | async | Stops playback, then destroys the synthesizer |
+| `clearSynthesisCache()` | async | Empties the synthesis cache. The limit is kept |
+| `getSynthesisCacheStats()` | async | Entry count, bytes, limit, hits and misses of the synthesis cache |
 
 On iOS `finalize()` frees resources immediately. On Android the Java API has no explicit close, so
 the reference is dropped and release timing is left to the GC.

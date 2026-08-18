@@ -5,10 +5,34 @@ import android.os.StatFs
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 
 /** `initialize()` に渡す、端末上の絶対パス。 */
 data class VoicevoxAssetPaths(val openJtalkDictDir: String, val voiceModelPaths: List<String>)
+
+/**
+ * `prepareAssets()` を走らせずに読める範囲のアセットの状態。
+ *
+ * 「もう使える状態か」「使えないなら何 MB 取りに行くことになるか」を、取得も展開も始めずに
+ * 知るための口。
+ */
+data class VoicevoxAssetStatus(
+  val configured: Boolean,
+  val ready: Boolean,
+  val assetSource: String,
+  val downloadBytes: Long
+) {
+  fun toResultMap(): Map<String, Any> =
+    mapOf(
+      "configured" to configured,
+      "ready" to ready,
+      "assetSource" to assetSource,
+      "downloadBytes" to downloadBytes
+    )
+}
 
 /** アセットの準備中に JS へ流す進捗。 */
 data class VoicevoxPrepareProgress(
@@ -100,7 +124,56 @@ class VoicevoxAssets(private val context: Context) {
   }
 
   private val lock = Any()
-  private var cached: VoicevoxAssetPaths? = null
+
+  /** [status] が [lock] を取らずに読むので `@Volatile`（取ると準備の完了まで待たされる）。 */
+  @Volatile private var cached: VoicevoxAssetPaths? = null
+
+  /**
+   * 中断の要求。[cancel] は [lock] を取らずに立てる（取ると準備が終わるまで戻らず、
+   * 中断の意味が無くなる）。
+   */
+  private val cancelled = AtomicBoolean(false)
+
+  /**
+   * 進行中の [prepare] を中断させる。走っていなければ何もしない。
+   *
+   * 次の [prepare] は入口でこのフラグを下ろすので、中断したあとでもやり直せる。
+   */
+  fun cancel() {
+    cancelled.set(true)
+  }
+
+  /**
+   * 取得も展開も始めずに読める範囲の状態を返す。
+   *
+   * [lock] を取らないので、準備の実行中でも即座に返る（そのあいだは `ready = false`）。
+   */
+  fun status(): VoicevoxAssetStatus {
+    val manifest =
+      try {
+        readManifest()
+      } catch (error: Throwable) {
+        // マニフェストが無い = config plugin が入っていない。エラーにはしない
+        // （「まだ設定していない」を知るための API なので）。
+        return VoicevoxAssetStatus(
+          configured = false,
+          ready = false,
+          assetSource = "bundle",
+          downloadBytes = 0
+        )
+      }
+    val downloadBytes = manifest.downloads.sumOf { it.size ?: 0L }
+    if (manifest.manifestVersion != 1) {
+      return VoicevoxAssetStatus(true, false, manifest.assetSource, downloadBytes)
+    }
+
+    val root = File(File(context.noBackupFilesDir, "expo-voicevox"), manifest.revision)
+    val ready =
+      cached != null ||
+        (File(root, COMPLETE_MARKER).exists() &&
+          runCatching { resolvePaths(manifest, root) }.isSuccess)
+    return VoicevoxAssetStatus(true, ready, manifest.assetSource, downloadBytes)
+  }
 
   /** アセットを使える状態にして絶対パスを返す。2 回目以降は何もしない。 */
   fun prepare(onProgress: (VoicevoxPrepareProgress) -> Unit): VoicevoxAssetPaths =
@@ -108,6 +181,8 @@ class VoicevoxAssets(private val context: Context) {
       cached?.let {
         return it
       }
+      // 前回の中断を引きずらない。
+      cancelled.set(false)
 
       val manifest = readManifest()
       if (manifest.manifestVersion != 1) {
@@ -225,7 +300,7 @@ class VoicevoxAssets(private val context: Context) {
       }
       try {
         context.assets.open(assetPath).use { input ->
-          target.outputStream().buffered(BUFFER_SIZE).use { output -> input.copyTo(output, BUFFER_SIZE) }
+          target.outputStream().buffered(BUFFER_SIZE).use { output -> copyCancellable(input, output) }
         }
       } catch (error: IOException) {
         throw VoicevoxException(
@@ -235,6 +310,29 @@ class VoicevoxAssets(private val context: Context) {
       }
     }
     onProgress(VoicevoxPrepareProgress("extract", "", 0, 0, entries.size, entries.size))
+  }
+
+  /**
+   * `InputStream.copyTo` の代わり。1 バッファごとに中断を見る。
+   *
+   * 0.vvm だけで 56MB あるので、ファイル単位のチェックでは中断が数秒待たされる。
+   */
+  private fun copyCancellable(input: InputStream, output: OutputStream) {
+    val buffer = ByteArray(BUFFER_SIZE)
+    while (true) {
+      throwIfCancelled()
+      val read = input.read(buffer)
+      if (read < 0) {
+        return
+      }
+      output.write(buffer, 0, read)
+    }
+  }
+
+  private fun throwIfCancelled() {
+    if (cancelled.get()) {
+      throw VoicevoxCancelledException()
+    }
   }
 
   /**
@@ -274,8 +372,15 @@ class VoicevoxAssets(private val context: Context) {
     }
 
     manifest.downloads.forEachIndexed { index, entry ->
+      throwIfCancelled()
       val temporary = File(destination, "${entry.name}.download")
-      VoicevoxDownloader.download(entry.url, temporary, entry.size, entry.sha256) { written, total ->
+      VoicevoxDownloader.download(
+        entry.url,
+        temporary,
+        entry.size,
+        entry.sha256,
+        { cancelled.get() }
+      ) { written, total ->
         onProgress(
           VoicevoxPrepareProgress(
             "download",
@@ -292,7 +397,7 @@ class VoicevoxAssets(private val context: Context) {
         onProgress(
           VoicevoxPrepareProgress("extract", entry.name, 0, 0, index, manifest.downloads.size)
         )
-        VoicevoxArchive.extractTarGz(temporary, destination)
+        VoicevoxArchive.extractTarGz(temporary, destination) { cancelled.get() }
         temporary.delete()
       } else {
         val target = File(destination, entry.name)

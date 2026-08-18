@@ -15,6 +15,19 @@ class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   async prepareAssets(): Promise<never> {
     throw new Error(UNSUPPORTED);
   }
+  async getAssetStatus(): Promise<{
+    configured: boolean;
+    ready: boolean;
+    assetSource: 'bundle';
+    downloadBytes: number;
+  }> {
+    // web は対象外なので「設定されていない」を返す。throw しないのは、この API 自体が
+    // 「使える状態かを確かめる」ためのものだから。
+    return { configured: false, ready: false, assetSource: 'bundle', downloadBytes: 0 };
+  }
+  async cancelPrepareAssets(): Promise<void> {
+    // 何も準備していないので何もしない。
+  }
   async initialize(): Promise<void> {
     throw new Error(UNSUPPORTED);
   }
@@ -72,6 +85,15 @@ class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   async speakFromAudioQuery(): Promise<never> {
     throw new Error(UNSUPPORTED);
   }
+  async precacheSpeech(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async precacheSpeechFromKana(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
+  async precacheSpeechFromAudioQuery(): Promise<never> {
+    throw new Error(UNSUPPORTED);
+  }
   async stopSpeaking(): Promise<void> {
     // 何も鳴らしていないので何もしない。
   }
@@ -80,6 +102,12 @@ class ExpoVoicevoxModule extends NativeModule<ExpoVoicevoxModuleEvents> {
   }
   async finalize(): Promise<void> {
     // 何も確保していないので何もしない。
+  }
+  async clearSynthesisCache(): Promise<void> {
+    // 何も合成していないので何もしない。
+  }
+  async getSynthesisCacheStats(): Promise<never> {
+    throw new Error(UNSUPPORTED);
   }
 }
 

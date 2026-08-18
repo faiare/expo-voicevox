@@ -32,20 +32,26 @@ enum VoicevoxArchive {
   }
 
   /// `source` の tar.gz を `destination` 直下へ展開する。
-  static func extractTarGz(source: URL, destination: URL) throws {
+  static func extractTarGz(
+    source: URL,
+    destination: URL,
+    isCancelled: @escaping () -> Bool = { false }
+  ) throws {
     let tarURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("expo-voicevox-\(UUID().uuidString).tar")
     defer { try? FileManager.default.removeItem(at: tarURL) }
 
-    try gunzip(source: source, destination: tarURL)
-    try extractTar(source: tarURL, destination: destination)
+    try gunzip(source: source, destination: tarURL, isCancelled: isCancelled)
+    try extractTar(source: tarURL, destination: destination, isCancelled: isCancelled)
   }
 
   // MARK: - gzip
 
   private static let chunkSize = 1 << 20
 
-  static func gunzip(source: URL, destination: URL) throws {
+  static func gunzip(
+    source: URL, destination: URL, isCancelled: @escaping () -> Bool = { false }
+  ) throws {
     let input = try FileHandle(forReadingFrom: source)
     defer { try? input.close() }
 
@@ -75,7 +81,7 @@ enum VoicevoxArchive {
     let output = try FileHandle(forWritingTo: destination)
     defer { try? output.close() }
 
-    try inflate(input: input, output: output)
+    try inflate(input: input, output: output, isCancelled: isCancelled)
   }
 
   private static func skipZeroTerminatedString(_ handle: FileHandle) throws {
@@ -91,7 +97,9 @@ enum VoicevoxArchive {
   /// 入出力とも自前で確保したバッファを使う。`compression_stream` は
   /// `compression_stream_process` を跨いで `src_ptr` を保持するため、
   /// `Data.withUnsafeBytes` のようにクロージャの中でしか有効でないポインタは渡せない。
-  private static func inflate(input: FileHandle, output: FileHandle) throws {
+  private static func inflate(
+    input: FileHandle, output: FileHandle, isCancelled: () -> Bool = { false }
+  ) throws {
     let streamPointer = UnsafeMutablePointer<compression_stream>.allocate(capacity: 1)
     defer { streamPointer.deallocate() }
 
@@ -116,6 +124,10 @@ enum VoicevoxArchive {
     var reachedEnd = false
 
     while true {
+      // 22MB の辞書を展開するので、チャンクごとに見ないと中断が数秒待たされる。
+      if isCancelled() {
+        throw VoicevoxCancelledException()
+      }
       if streamPointer.pointee.src_size == 0 && !reachedEnd {
         let data = input.readData(ofLength: chunkSize)
         if data.isEmpty {
@@ -154,7 +166,9 @@ enum VoicevoxArchive {
 
   /// ustar の通常ファイルとディレクトリだけを扱う素朴な実装。
   /// voicevox が配布する辞書はこの 2 種類しか含まない。
-  static func extractTar(source: URL, destination: URL) throws {
+  static func extractTar(
+    source: URL, destination: URL, isCancelled: () -> Bool = { false }
+  ) throws {
     let input = try FileHandle(forReadingFrom: source)
     defer { try? input.close() }
 
@@ -162,6 +176,9 @@ enum VoicevoxArchive {
 
     var emptyBlocks = 0
     while true {
+      if isCancelled() {
+        throw VoicevoxCancelledException()
+      }
       let header = input.readData(ofLength: blockSize)
       if header.count < blockSize {
         // 終端ブロックが欠けている tar もあるので、ここは正常終了として扱う。
