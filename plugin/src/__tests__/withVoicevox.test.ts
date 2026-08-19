@@ -62,24 +62,54 @@ describe('withVoicevox', () => {
     expect(loggedLines()).not.toContain('License and credit requirements');
   });
 
-  it('prebuild が設定を何度解決しても告知は 1 回だけ出す', () => {
+  it('prebuild が設定を何度解決しても同じログは 1 回しか出さない', () => {
     jest.resetModules();
     const withVoicevox = require('../withVoicevox').default;
 
     // createRunOncePlugin は同じ config オブジェクトでの重複だけを弾く。
-    // prebuild は platform ごと・--clean の前後で config を作り直すので、
+    // Expo CLI は 1 コマンドの中で getConfig() を何度も呼んで config を作り直すので、
     // ここでも毎回新しい config を渡して同じ状況を作る。
     for (let i = 0; i < 3; i += 1) {
       withVoicevox({ name: 'test', slug: 'test' }, { voices: ['zundamon/normal'] });
     }
 
-    const occurrences = log.mock.calls.filter((call) =>
-      String(call[0]).includes('License and credit requirements')
-    );
-    expect(occurrences).toHaveLength(1);
-    // 取り込む声のログは毎回出る（告知だけを絞っている）。
+    expect(
+      log.mock.calls.filter((call) => String(call[0]).includes('License and credit requirements'))
+    ).toHaveLength(1);
     expect(
       log.mock.calls.filter((call) => String(call[0]).includes('voice models: 1 file(s)'))
-    ).toHaveLength(3);
+    ).toHaveLength(1);
+  });
+
+  it('解決結果が変われば出し直す', () => {
+    jest.resetModules();
+    const withVoicevox = require('../withVoicevox').default;
+
+    withVoicevox({ name: 'test', slug: 'test' }, { voices: ['zundamon/normal'] });
+    withVoicevox(
+      { name: 'test', slug: 'test' },
+      { voices: ['zundamon/normal', 'zundamon/sasayaki'] }
+    );
+
+    expect(
+      log.mock.calls.filter((call) => String(call[0]).includes('voice models: 1 file(s)'))
+    ).toHaveLength(1);
+    expect(
+      log.mock.calls.filter((call) => String(call[0]).includes('voice models: 2 file(s)'))
+    ).toHaveLength(1);
+  });
+
+  it('同じ警告も繰り返さない', () => {
+    jest.resetModules();
+    const withVoicevox = require('../withVoicevox').default;
+
+    // s0.vvm は歌唱専用なので「使えないサイズが増える」警告が出る。
+    for (let i = 0; i < 3; i += 1) {
+      withVoicevox({ name: 'test', slug: 'test' }, { voices: [{ file: 's0.vvm' }] });
+    }
+
+    expect(
+      warn.mock.calls.filter((call) => String(call[0]).includes('only contains singing voices'))
+    ).toHaveLength(1);
   });
 });

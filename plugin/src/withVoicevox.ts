@@ -78,14 +78,27 @@ export function collectWarnings(props: ResolvedVoicevoxProps): string[] {
 /** 利用規約の告知をプロセス内で 1 回に絞るためのフラグ。 */
 let termsPrinted = false;
 
+/** 直前に出した選択内容と警告。同じものを続けて出さないため。 */
+let lastPrinted: string | null = null;
+
 const withVoicevox: ConfigPlugin<ExpoVoicevoxPluginProps | void> = (config, props) => {
   const resolved = resolveProps(props ?? {});
 
-  for (const line of describeSelection(resolved).split('\n')) {
-    console.log(`expo-voicevox: ${line}`);
-  }
-  for (const warning of collectWarnings(resolved)) {
-    console.warn(`expo-voicevox: warning: ${warning}`);
+  // Expo CLI は 1 コマンドの中で getConfig() を何度も呼ぶ（prebuild だけでも
+  // 冒頭の読み込み・bundle identifier の確認・その後の読み直し・getPrebuildConfig の
+  // 4 回）。getConfig はそのたびに config を作り直すので `createRunOncePlugin` では
+  // 弾けず、素直に出すと同じログが 2〜5 回流れる。内容が変わったときだけ出す。
+  const selection = describeSelection(resolved);
+  const warnings = collectWarnings(resolved);
+  const printed = [selection, ...warnings].join('\n');
+  if (printed !== lastPrinted) {
+    lastPrinted = printed;
+    for (const line of selection.split('\n')) {
+      console.log(`expo-voicevox: ${line}`);
+    }
+    for (const warning of warnings) {
+      console.warn(`expo-voicevox: warning: ${warning}`);
+    }
   }
   // 音声モデルを同梱しない設定なら、クレジット表記の義務も発生しないので出さない。
   //
