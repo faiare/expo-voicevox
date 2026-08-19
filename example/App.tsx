@@ -407,6 +407,15 @@ export default function App() {
     [withBusy]
   );
 
+  // iOS のシミュレータへは日本語を打ち込めない。placeholder と同じ値を入れて
+  // 辞書の登録経路を一通り試せるようにしておく。
+  const handleFillSampleWord = useCallback(() => {
+    setSurface('四国めたん');
+    setPronunciation('シコクメタン');
+    setAccentType(0);
+    setWordType('PROPER_NOUN');
+  }, []);
+
   const handleAddWord = useCallback(() => {
     if (surface.length === 0 || pronunciation.length === 0) {
       setError('表記と読みを入力してください');
@@ -451,22 +460,42 @@ export default function App() {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={styles.header}>expo-voicevox</Text>
 
-        <Group name="1. ライブラリ">
-          <Row label="voicevox-core" value={version ?? '（未取得）'} />
-          <Row label="初期化済み" value={initialized ? 'はい' : 'いいえ'} />
+        <Group testID="section-lib" name="1. ライブラリ">
+          <Row testID="lib-version" label="voicevox-core" value={version ?? '（未取得）'} />
+          <Row testID="lib-initialized" label="初期化済み" value={initialized ? 'はい' : 'いいえ'} />
         </Group>
 
-        <Group name="2. 初期化">
+        <Group testID="section-init" name="2. 初期化">
           <Text style={styles.note}>
             音声モデルと OpenJTalk 辞書は app.json の expo-voicevox plugin が prebuild
             時に埋め込んでいます。Android は初回のみ端末への展開が走ります。
           </Text>
-          <Button title="getAssetStatus()" onPress={handleAssetStatus} disabled={busy} />
-          <Button title="prepareAssets()" onPress={handlePrepareAssets} disabled={busy} />
-          {/* 準備中に押すためのボタンなので busy では止めない。 */}
-          <Button title="cancelPrepareAssets()" onPress={handleCancelPrepare} />
-          <Button title="initialize()" onPress={handleInitialize} disabled={busy} />
           <Button
+            testID="btn-asset-status"
+            title="getAssetStatus()"
+            onPress={handleAssetStatus}
+            disabled={busy}
+          />
+          <Button
+            testID="btn-prepare-assets"
+            title="prepareAssets()"
+            onPress={handlePrepareAssets}
+            disabled={busy}
+          />
+          {/* 準備中に押すためのボタンなので busy では止めない。 */}
+          <Button
+            testID="btn-cancel-prepare"
+            title="cancelPrepareAssets()"
+            onPress={handleCancelPrepare}
+          />
+          <Button
+            testID="btn-initialize"
+            title="initialize()"
+            onPress={handleInitialize}
+            disabled={busy}
+          />
+          <Button
+            testID="btn-finalize"
             title="finalize()"
             onPress={handleFinalize}
             disabled={busy || !initialized}
@@ -474,7 +503,7 @@ export default function App() {
           />
         </Group>
 
-        <Group name="3. 合成">
+        <Group testID="section-synth" name="3. 合成">
           <Text style={styles.label}>スタイル</Text>
           <View style={styles.styleList}>
             {characters.flatMap((character) =>
@@ -483,6 +512,7 @@ export default function App() {
                 .map((style) => (
                   <Chip
                     key={style.id}
+                    testID={`style-chip-${style.id}`}
                     label={`${character.name} / ${style.name}`}
                     selected={style.id === styleId}
                     onPress={() => setStyleId(style.id)}
@@ -495,21 +525,30 @@ export default function App() {
           </View>
 
           <Text style={styles.label}>テキスト</Text>
-          <TextInput style={styles.input} value={text} onChangeText={setText} multiline />
+          <TextInput
+            testID="input-text"
+            style={styles.input}
+            value={text}
+            onChangeText={setText}
+            multiline
+          />
           <Text style={styles.label}>WAV の書き出し先</Text>
           <View style={styles.styleList}>
             <Chip
+              testID="dir-chip-cache"
               label="cache（既定）"
               selected={directory === 'cache'}
               onPress={() => setDirectory('cache')}
             />
             <Chip
+              testID="dir-chip-document"
               label="document"
               selected={directory === 'document'}
               onPress={() => setDirectory('document')}
             />
           </View>
           <Button
+            testID="btn-synthesize-play"
             title="合成して再生"
             onPress={handleSpeak}
             disabled={busy || styleId === null}
@@ -519,25 +558,32 @@ export default function App() {
             下の speak() はファイルを作らず、メモリ上の WAV をネイティブでそのまま鳴らします。
           </Text>
           <Button
+            testID="btn-speak"
             title="speak() で再生（ファイルを作らない）"
             onPress={handleSpeakOnDemand}
             disabled={busy || styleId === null}
           />
           <Button
+            testID="btn-speak-faster"
             title="speak() で再生（speedScale 1.1 / prePhonemeLength 0）"
             onPress={handleSpeakFaster}
             disabled={busy || styleId === null}
           />
           {/* 再生中は busy になるので、停止だけは busy でも押せるようにしておく。 */}
-          <Button title="stopSpeaking()" onPress={handleStopSpeaking} />
-          {speechState ? <Text style={styles.note}>再生状態: {speechState}</Text> : null}
+          <Button testID="btn-stop-speaking" title="stopSpeaking()" onPress={handleStopSpeaking} />
+          {speechState ? (
+            <Text testID="speech-state" style={styles.note}>
+              再生状態: {speechState}
+            </Text>
+          ) : null}
         </Group>
 
-        <Group name="4. 合成パラメータ">
+        <Group testID="section-params" name="4. 合成パラメータ">
           <Text style={styles.note}>
             createAudioQuery() で作った AudioQuery を書き換えてから synthesis() に渡します。
           </Text>
           <Stepper
+            testID="param-speed"
             label="話速 speedScale"
             value={params.speedScale}
             step={0.1}
@@ -546,6 +592,7 @@ export default function App() {
             onChange={(speedScale) => setParams({ ...params, speedScale })}
           />
           <Stepper
+            testID="param-pitch"
             label="音高 pitchScale"
             value={params.pitchScale}
             step={0.01}
@@ -554,6 +601,7 @@ export default function App() {
             onChange={(pitchScale) => setParams({ ...params, pitchScale })}
           />
           <Stepper
+            testID="param-intonation"
             label="抑揚 intonationScale"
             value={params.intonationScale}
             step={0.1}
@@ -562,6 +610,7 @@ export default function App() {
             onChange={(intonationScale) => setParams({ ...params, intonationScale })}
           />
           <Stepper
+            testID="param-volume"
             label="音量 volumeScale"
             value={params.volumeScale}
             step={0.1}
@@ -570,6 +619,7 @@ export default function App() {
             onChange={(volumeScale) => setParams({ ...params, volumeScale })}
           />
           <Stepper
+            testID="param-pre"
             label="開始の無音 prePhonemeLength（秒）"
             value={params.prePhonemeLength}
             step={0.05}
@@ -578,6 +628,7 @@ export default function App() {
             onChange={(prePhonemeLength) => setParams({ ...params, prePhonemeLength })}
           />
           <Stepper
+            testID="param-post"
             label="終了の無音 postPhonemeLength（秒）"
             value={params.postPhonemeLength}
             step={0.05}
@@ -585,8 +636,14 @@ export default function App() {
             max={1.5}
             onChange={(postPhonemeLength) => setParams({ ...params, postPhonemeLength })}
           />
-          <Toggle label="疑問文の語尾を上げる" value={upspeak} onChange={setUpspeak} />
+          <Toggle
+            testID="param-upspeak"
+            label="疑問文の語尾を上げる"
+            value={upspeak}
+            onChange={setUpspeak}
+          />
           <Button
+            testID="btn-params-reset"
             title="既定値に戻す"
             onPress={() => setParams(DEFAULT_PARAMS)}
             disabled={busy}
@@ -594,23 +651,28 @@ export default function App() {
           />
         </Group>
 
-        <Group name="5. アクセントと音高">
+        <Group testID="section-accent" name="5. アクセントと音高">
           <Text style={styles.note}>
             上のテキストからアクセント句を取り出して編集します。数字はアクセント核の位置で、
             0 は平板です。モーラを選ぶと音高と長さを個別に変えられます。
           </Text>
           <Button
+            testID="btn-accent-load"
             title="アクセント句を取得"
             onPress={handleLoadPhrases}
             disabled={busy || styleId === null}
           />
 
           {phrases.map((phrase, phraseIndex) => (
-            <View key={phraseIndex} style={styles.phrase}>
+            <View
+              key={phraseIndex}
+              testID={`accent-phrase-${phraseIndex}`}
+              style={styles.phrase}>
               <View style={styles.moraList}>
                 {phrase.moras.map((mora, moraIndex) => (
                   <Chip
                     key={moraIndex}
+                    testID={`mora-chip-${phraseIndex}-${moraIndex}`}
                     label={mora.text}
                     selected={
                       selectedMora?.phrase === phraseIndex && selectedMora?.mora === moraIndex
@@ -620,6 +682,7 @@ export default function App() {
                 ))}
               </View>
               <Stepper
+                testID={`accent-core-${phraseIndex}`}
                 label="アクセント核"
                 value={phrase.accent}
                 step={1}
@@ -631,6 +694,7 @@ export default function App() {
                 }
               />
               <Toggle
+                testID={`accent-interrogative-${phraseIndex}`}
                 label="疑問形"
                 value={phrase.isInterrogative}
                 onChange={(isInterrogative) =>
@@ -642,8 +706,11 @@ export default function App() {
 
           {selected && selectedMora ? (
             <View style={styles.phrase}>
-              <Text style={styles.label}>選択中のモーラ: {selected.text}</Text>
+              <Text testID="selected-mora-label" style={styles.label}>
+                選択中のモーラ: {selected.text}
+              </Text>
               <Stepper
+                testID="selected-mora-pitch"
                 label="音高 pitch"
                 value={selected.pitch}
                 step={0.1}
@@ -654,6 +721,7 @@ export default function App() {
                 }
               />
               <Stepper
+                testID="selected-mora-length"
                 label="母音の長さ vowelLength（秒）"
                 value={selected.vowelLength}
                 step={0.01}
@@ -669,12 +737,14 @@ export default function App() {
           {phrases.length > 0 ? (
             <>
               <Button
+                testID="btn-accent-replace-mora-data"
                 title="読みを付け直す（replaceMoraData）"
                 onPress={handleRegenerateMoraData}
                 disabled={busy}
                 variant="secondary"
               />
               <Button
+                testID="btn-accent-speak"
                 title="このアクセント句で合成して再生"
                 onPress={handleSpeakPhrases}
                 disabled={busy}
@@ -683,7 +753,7 @@ export default function App() {
           ) : null}
         </Group>
 
-        <Group name="6. ユーザー辞書">
+        <Group testID="section-dict" name="6. ユーザー辞書">
           <Text style={styles.note}>
             setUserDictWords() は全置換です。下のリストが唯一の状態で、変更のたびに丸ごと渡し直します。
             initialize() の前でも呼べます。
@@ -691,6 +761,7 @@ export default function App() {
 
           <Text style={styles.label}>表記</Text>
           <TextInput
+            testID="input-dict-surface"
             style={styles.inputSingle}
             value={surface}
             onChangeText={setSurface}
@@ -698,6 +769,7 @@ export default function App() {
           />
           <Text style={styles.label}>読み（全角カタカナ）</Text>
           <TextInput
+            testID="input-dict-pronunciation"
             style={styles.inputSingle}
             value={pronunciation}
             onChangeText={setPronunciation}
@@ -708,6 +780,7 @@ export default function App() {
             {WORD_TYPES.map((type) => (
               <Chip
                 key={type}
+                testID={`wordtype-chip-${type}`}
                 label={type}
                 selected={type === wordType}
                 onPress={() => setWordType(type)}
@@ -715,6 +788,7 @@ export default function App() {
             ))}
           </View>
           <Stepper
+            testID="dict-accent"
             label="アクセント核 accentType"
             value={accentType}
             step={1}
@@ -724,6 +798,7 @@ export default function App() {
             onChange={setAccentType}
           />
           <Stepper
+            testID="dict-priority"
             label="優先度 priority"
             value={priority}
             step={1}
@@ -736,15 +811,30 @@ export default function App() {
             既定の辞書に無い語なら priority は既定の 5 で足ります。既にある語の読みを
             上書きしたいときは priority を上げてください（形態素解析のコスト勝負になります）。
           </Text>
-          <Button title="登録する" onPress={handleAddWord} disabled={busy} />
+          {/* iOS のシミュレータには日本語を送り込めないので、E2E から辞書を試せるようにしておく。 */}
+          <Button
+            testID="btn-dict-fill-sample"
+            title="例を入れる"
+            onPress={handleFillSampleWord}
+            disabled={busy}
+            variant="secondary"
+          />
+          <Button
+            testID="btn-dict-add"
+            title="登録する"
+            onPress={handleAddWord}
+            disabled={busy}
+          />
 
           {words.map((word, index) => (
             <View key={index} style={styles.wordRow}>
-              <Text style={styles.value}>
+              <Text testID={`dict-word-${index}`} style={styles.value}>
                 {word.surface} → {word.pronunciation}（{word.wordType}, アクセント核{' '}
                 {word.accentType}, 優先度 {word.priority}）
               </Text>
               <Pressable
+                testID={`btn-dict-remove-${index}`}
+                accessibilityRole="button"
                 onPress={() => applyWords(words.filter((_, i) => i !== index))}
                 disabled={busy}>
                 <Text style={styles.remove}>削除</Text>
@@ -753,35 +843,53 @@ export default function App() {
           ))}
         </Group>
 
-        <Group name="7. カナから合成">
+        <Group testID="section-kana" name="7. カナから合成">
           <Text style={styles.note}>
             AquesTalk 風記法。&apos; がアクセント核、_ が無声化、/ が句切り、？ が疑問形です。
           </Text>
-          <TextInput style={styles.inputSingle} value={kana} onChangeText={setKana} />
+          <TextInput
+            testID="input-kana"
+            style={styles.inputSingle}
+            value={kana}
+            onChangeText={setKana}
+          />
           <Button
+            testID="btn-kana-speak"
             title="カナで合成して再生"
             onPress={handleSpeakFromKana}
             disabled={busy || styleId === null}
           />
         </Group>
 
-        <Group name="8. 合成キャッシュ">
+        <Group testID="section-cache" name="8. 合成キャッシュ">
           <Text style={styles.note}>
             同じテキスト・スタイル・オプションの組み合わせは、2 回目から合成をやり直しません。
             ユーザー辞書を変えると読みが変わるので、その時点で自動的に捨てられます。
           </Text>
           <Button
+            testID="btn-cache-measure"
             title="キャッシュの効きを測る（同じ入力で 2 回合成）"
             onPress={handleMeasureCache}
             disabled={busy || styleId === null}
           />
           <Button
+            testID="btn-cache-precache"
             title="precacheSpeech() で温めてから speak()"
             onPress={handlePrecache}
             disabled={busy || styleId === null}
           />
-          <Button title="getSynthesisCacheStats()" onPress={handleCacheStats} disabled={busy} />
-          <Button title="clearSynthesisCache()" onPress={handleClearCache} disabled={busy} />
+          <Button
+            testID="btn-cache-stats"
+            title="getSynthesisCacheStats()"
+            onPress={handleCacheStats}
+            disabled={busy}
+          />
+          <Button
+            testID="btn-cache-clear"
+            title="clearSynthesisCache()"
+            onPress={handleClearCache}
+            disabled={busy}
+          />
         </Group>
 
         {/* VOICEVOX 音声モデル / ONNX Runtime の利用規約が求めるクレジット表記。 */}
