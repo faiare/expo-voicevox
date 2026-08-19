@@ -423,7 +423,32 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
+      {/*
+        実行中かどうかと直前の結果は、スクロール位置に関係なく常に見えるようにしておく。
+        ScrollView の外に置いてレイアウトを占有させるので、Android の dev トーストや
+        ソフトキーボード（どちらも画面下部に出る）と重ならない。
+      */}
+      <View testID="status-bar" style={styles.statusBar}>
+        <View style={styles.statusRow}>
+          <Text testID="status-busy" style={styles.statusBadge}>
+            {busy ? 'BUSY' : 'IDLE'}
+          </Text>
+          <Text testID="status-initialized" style={styles.statusBadge}>
+            {initialized ? '初期化: はい' : '初期化: いいえ'}
+          </Text>
+          {busy ? <ActivityIndicator /> : null}
+        </View>
+        <Text testID="status-text" style={[styles.note, styles.statusText]} numberOfLines={4}>
+          {status || '—'}
+        </Text>
+        {error ? (
+          <Text testID="status-error" style={styles.error} numberOfLines={4}>
+            {error}
+          </Text>
+        ) : null}
+      </View>
+
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text style={styles.header}>expo-voicevox</Text>
 
         <Group name="1. ライブラリ">
@@ -759,12 +784,6 @@ export default function App() {
           <Button title="clearSynthesisCache()" onPress={handleClearCache} disabled={busy} />
         </Group>
 
-        <Group name="状態">
-          {busy ? <ActivityIndicator /> : null}
-          {status ? <Text style={styles.note}>{status}</Text> : null}
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-        </Group>
-
         {/* VOICEVOX 音声モデル / ONNX Runtime の利用規約が求めるクレジット表記。 */}
         <View style={styles.credits}>
           <Text style={styles.creditsText}>Powered by VOICEVOX</Text>
@@ -819,20 +838,20 @@ function describeError(error: unknown): string {
   return String(error);
 }
 
-function Group(props: { name: string; children: React.ReactNode }) {
+function Group(props: { testID?: string; name: string; children: React.ReactNode }) {
   return (
-    <View style={styles.group}>
+    <View testID={props.testID} style={styles.group}>
       <Text style={styles.groupHeader}>{props.name}</Text>
       {props.children}
     </View>
   );
 }
 
-function Row(props: { label: string; value: string }) {
+function Row(props: { testID?: string; label: string; value: string }) {
   return (
     <View style={styles.row}>
       <Text style={styles.label}>{props.label}</Text>
-      <Text style={styles.value} numberOfLines={2}>
+      <Text testID={props.testID} style={styles.value} numberOfLines={2}>
         {props.value}
       </Text>
     </View>
@@ -840,6 +859,7 @@ function Row(props: { label: string; value: string }) {
 }
 
 function Button(props: {
+  testID?: string;
   title: string;
   onPress: () => void;
   disabled?: boolean;
@@ -848,6 +868,7 @@ function Button(props: {
   const secondary = props.variant === 'secondary';
   return (
     <Pressable
+      testID={props.testID}
       onPress={props.onPress}
       disabled={props.disabled}
       style={[
@@ -860,9 +881,14 @@ function Button(props: {
   );
 }
 
-function Chip(props: { label: string; selected: boolean; onPress: () => void }) {
+function Chip(props: { testID?: string; label: string; selected: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={props.onPress} style={[styles.chip, props.selected && styles.chipSelected]}>
+    <Pressable
+      testID={props.testID}
+      accessibilityRole="button"
+      accessibilityState={{ selected: props.selected }}
+      onPress={props.onPress}
+      style={[styles.chip, props.selected && styles.chipSelected]}>
       <Text style={props.selected ? styles.chipTextSelected : styles.chipText}>{props.label}</Text>
     </Pressable>
   );
@@ -874,6 +900,7 @@ function Chip(props: { label: string; selected: boolean; onPress: () => void }) 
  * スライダを使わないのは、example のためだけに依存を増やしたくないため。
  */
 function Stepper(props: {
+  testID?: string;
   label: string;
   value: number;
   step: number;
@@ -892,11 +919,22 @@ function Stepper(props: {
     <View style={styles.stepper}>
       <Text style={styles.stepperLabel}>{props.label}</Text>
       <View style={styles.stepperControls}>
-        <Pressable onPress={() => move(-props.step)} style={styles.stepperButton}>
+        <Pressable
+          testID={props.testID ? `${props.testID}-minus` : undefined}
+          accessibilityRole="button"
+          onPress={() => move(-props.step)}
+          style={styles.stepperButton}>
           <Text style={styles.stepperButtonText}>−</Text>
         </Pressable>
-        <Text style={styles.stepperValue}>{props.value.toFixed(digits)}</Text>
-        <Pressable onPress={() => move(props.step)} style={styles.stepperButton}>
+        {/* 値の Text は Pressable の兄弟。iOS で子 Text が親にマージされるのを避けるため。 */}
+        <Text testID={props.testID ? `${props.testID}-value` : undefined} style={styles.stepperValue}>
+          {props.value.toFixed(digits)}
+        </Text>
+        <Pressable
+          testID={props.testID ? `${props.testID}-plus` : undefined}
+          accessibilityRole="button"
+          onPress={() => move(props.step)}
+          style={styles.stepperButton}>
           <Text style={styles.stepperButtonText}>＋</Text>
         </Pressable>
       </View>
@@ -904,21 +942,58 @@ function Stepper(props: {
   );
 }
 
-function Toggle(props: { label: string; value: boolean; onChange: (value: boolean) => void }) {
+/**
+ * ON / OFF を切り替える UI。
+ *
+ * 行ごと Pressable にすると、iOS ではラベルとバッジの Text が親へマージされて
+ * アクセシビリティツリーから消える。タップ領域はバッジだけに絞ってある。
+ */
+function Toggle(props: {
+  testID?: string;
+  label: string;
+  value: boolean;
+  onChange: (value: boolean) => void;
+}) {
   return (
-    <Pressable onPress={() => props.onChange(!props.value)} style={styles.stepper}>
+    <View style={styles.stepper}>
       <Text style={styles.stepperLabel}>{props.label}</Text>
-      <View style={[styles.toggle, props.value && styles.toggleOn]}>
-        <Text style={props.value ? styles.toggleTextOn : styles.toggleText}>
+      <Pressable
+        testID={props.testID}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: props.value }}
+        onPress={() => props.onChange(!props.value)}
+        style={[styles.toggle, props.value && styles.toggleOn]}>
+        <Text
+          testID={props.testID ? `${props.testID}-value` : undefined}
+          style={props.value ? styles.toggleTextOn : styles.toggleText}>
           {props.value ? 'ON' : 'OFF'}
         </Text>
-      </View>
-    </Pressable>
+      </Pressable>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#eee' },
+  statusBar: {
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ddd',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  statusText: { marginBottom: 0 },
+  statusBadge: {
+    fontSize: 12,
+    color: '#333',
+    backgroundColor: '#eee',
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    overflow: 'hidden',
+  },
   content: { paddingBottom: 40 },
   header: { fontSize: 30, margin: 20 },
   group: { margin: 20, marginBottom: 0, backgroundColor: '#fff', borderRadius: 10, padding: 20 },
