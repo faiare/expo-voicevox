@@ -31,9 +31,8 @@ tags:
     text: '.*四国めたん → シコクメタン.*'
 
 # 2 語目。登録に成功すると入力欄は空に戻るので、表記と読みの両方を入れ直す。
-# ここだけ inputText を通して、キーボードからの入力経路も確かめておく。
-# 読みは全角カタカナしか受け付けないため「例を入れる」で埋め、表記だけ
-# ASCII に差し替える（iOS のシミュレータには日本語を送り込めない）。
+# 読みは全角カタカナしか受け付けず、iOS のシミュレータには日本語を送り込めない
+# ので「例を入れる」で埋め、表記だけ ASCII に差し替える。
 - scrollUntilVisible:
     element:
       id: 'btn-dict-fill-sample'
@@ -42,6 +41,39 @@ tags:
     speed: 30
 - tapOn:
     id: 'btn-dict-fill-sample'
+
+# 品詞と優先度は、キーボードを出す前に変えておく。入力欄に触れるとキーボードが
+# 画面の下半分を覆い、その下にある Stepper はタップが吸われて反応しない。
+# 品詞のチップは「例を入れる」より上にあるので、戻る向きに探す。
+- scrollUntilVisible:
+    element:
+      id: 'wordtype-chip-COMMON_NOUN'
+    direction: UP
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'wordtype-chip-COMMON_NOUN'
+# 押せたことをその場で確かめる。Chip には accessibilityState を付けてあるので
+# 選択されているかどうかを見られる。
+- assertVisible:
+    id: 'wordtype-chip-COMMON_NOUN'
+    selected: true
+- scrollUntilVisible:
+    element:
+      id: 'dict-priority-value'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'dict-priority-value'
+    text: '5'
+- tapOn:
+    id: 'dict-priority-plus'
+- assertVisible:
+    id: 'dict-priority-value'
+    text: '6'
+
+# ここだけ inputText を通して、キーボードからの入力経路も確かめておく。
 - scrollUntilVisible:
     element:
       id: 'input-dict-surface'
@@ -50,21 +82,11 @@ tags:
     speed: 30
 - tapOn:
     id: 'input-dict-surface'
-- eraseText
+# eraseText は既定だと消す文字数が足りず「四国めたん」が残る。多めに指定する。
+- eraseText: 50
 - inputText: 'VOICEVOX'
-# hideKeyboard は iOS だと閉じ方を見つけられずに落ちることがある。ScrollView に
-# keyboardShouldPersistTaps="handled" を付けてあるので、キーボードが出たままでも
-# 次のタップは目的の要素へ届く。
-- scrollUntilVisible:
-    element:
-      id: 'wordtype-chip-COMMON_NOUN'
-    direction: DOWN
-    centerElement: true
-    speed: 30
-- tapOn:
-    id: 'wordtype-chip-COMMON_NOUN'
-- tapOn:
-    id: 'dict-priority-plus'
+
+# 登録ボタンはキーボードより上に来るまでスクロールしてから押す。
 - scrollUntilVisible:
     element:
       id: 'btn-dict-add'
@@ -77,6 +99,12 @@ tags:
 - assertVisible:
     id: 'status-text'
     text: '.*ユーザー辞書を更新しました（2 語）.*'
+- scrollUntilVisible:
+    element:
+      id: 'dict-word-1'
+    direction: DOWN
+    centerElement: true
+    speed: 30
 - assertVisible:
     id: 'dict-word-1'
     text: '.*VOICEVOX → シコクメタン（COMMON_NOUN.*優先度 6）.*'
