@@ -85,6 +85,10 @@ tags:
 # eraseText は既定だと消す文字数が足りず「四国めたん」が残る。多めに指定する。
 - eraseText: 50
 - inputText: 'VOICEVOX'
+# 入力欄は単一行なので Return で blur してキーボードが畳まれる。閉じないと
+# initialize() のボタンが画面の下半分に残るキーボードに覆われ、リストの先頭まで
+# スクロールしてもその上へは出てこない（タップはキーボードに吸われる）。
+- pressKey: Enter
 
 # 登録ボタンはキーボードより上に来るまでスクロールしてから押す。
 - scrollUntilVisible:
