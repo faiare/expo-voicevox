@@ -1,6 +1,6 @@
 {
   "name": "@faiare/expo-voicevox",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Japanese text-to-speech for Expo apps, powered by VOICEVOX CORE.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
