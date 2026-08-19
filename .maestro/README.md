@@ -134,6 +134,44 @@ maestro test --include-tags manual .maestro/90-prepare-cancel.yaml
 Android の `initialize()` は暗黙に `prepareAssets()` を呼ぶので、初回は 130MB の
 展開を含む。初期化と合成の待ちは 300 秒にしてある（早く終わればそのぶん待たない）。
 
+## CI で回す
+
+`.github/workflows/e2e.yml` が **Android（ubuntu-latest のエミュレータ）だけ**回す。iOS はまだ
+入っていない（macOS ランナー自体は public リポジトリなら無料で使える）。
+
+| トリガ | 範囲 |
+|---|---|
+| PR に `e2e` ラベルを付けたとき | `--include-tags smoke`（00/01/02） |
+| main への push | `manual` 以外の全フロー |
+| `workflow_dispatch` | 入力 `scope` で smoke / full を選ぶ |
+
+ラベルの無い PR では回らない。ネイティブを触ったときは手元から投げるのが早い。
+
+```bash
+gh pr edit --add-label e2e                                  # PR のチェックとして緑を見たいとき
+gh workflow run e2e.yml --ref feat/xxx -f scope=smoke       # 手元で確かめたいだけのとき
+gh run watch
+```
+
+`maestro check-syntax` だけの `lint` ジョブは端末が要らないので、ラベルに関係なく全 PR で回る。
+
+失敗すると `.maestro/output`（スクリーンショットとログ）と `maestro-report.xml` が artifact に
+上がる。`gh run download <run-id>` で落として、落ちたステップの直前のスクリーンショットを見る。
+
+CI 側の作りで踏みやすいのは 2 点。
+
+- **エミュレータの `emulator-options` から `-noaudio` を外してある**。`reactivecircus/android-emulator-runner`
+  の既定値には入っているが、音が鳴ったかの判断は `speech-state`（`AudioTrack` が出す実際の状態遷移）に
+  頼っているので、音声デバイスを殺すと `02-synthesis` の検証が空になる。
+- **APK は `-PreactNativeArchitectures=x86_64` の Release**。Debug は LogBox がタップを吸う。
+- **`adb install` の直後は待つ**。200MB の APK の dexopt でエミュレータが忙しく、adb が
+  `device offline` で一瞬落ちて `launchApp` が `DeviceServerDiedException` になる。
+- **エミュレータの前に `pulseaudio` のダミーシンクを立てている**。無いと `02-synthesis` が
+  `speech-state` の `started` で落ちる。**シンクを立ててもエミュレータの
+  「Could not init `pa` audio driver」は消えない**ので、あのメッセージでは判断しないこと。
+- **`android-emulator-runner` の `script` は 1 コマンド 1 行で書く**。行末のバックスラッシュ継続は
+  `@actions/exec` の引数分割を通るときに壊れ、`Flow path does not exist` で落ちる。
+
 ## つまずいたとき
 
 ```bash

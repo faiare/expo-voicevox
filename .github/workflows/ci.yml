@@ -105,5 +105,5 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: android-test-results
-          path: android/build/test-results/testDebugUnitTest/
+          path: example/android/build/test-results/testDebugUnitTest/
           if-no-files-found: ignore

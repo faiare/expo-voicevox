@@ -1,0 +1,220 @@
+name: E2E
+
+# Maestro の E2E は 1 回 20〜45 分かかるので、既存の ci.yml のように毎 PR では回さない。
+#   - PR       … `e2e` ラベルが付いているときだけ smoke（00/01/02）
+#   - main     … マージ後に manual 以外の全フロー
+#   - 手動      … workflow_dispatch で範囲を選ぶ（ネイティブを触ったときの主経路）
+# cron は入れていない。依存は package-lock.json と plugin/src/core/versions.ts で
+# ピン留めされていて、コミットが無いのに壊れる要素はランナーイメージの更新くらいしかない。
+# しかも ~/.cache/expo-voicevox が効いている限り上流アセットの取得経路は再検証されないので、
+# 定期実行しても「上流から消えた」は検知できない。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: 回すフローの範囲
+        type: choice
+        options: [full, smoke]
+        default: full
+
+# ci.yml とはグループを分ける。共有すると E2E のキャンセルが lint まで巻き込む。
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # 固定しないと「cron を入れなくても外的ドリフトが無い」という前提が崩れる。
+  # CLAUDE.md の「Maestro 2.8.0 / Java 17」と揃えること。
+  MAESTRO_VERSION: 2.8.0
+
+jobs:
+  # 端末が要らない構文チェックだけは、ラベルに関係なく全 PR で回す。
+  lint:
+    name: check-syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      # maestro は JVM アプリなので check-syntax にも Java が要る。
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Maestro
+        run: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      # node_modules は要らない（maestro を直接叩くだけ）ので npm ci は省く。
+      - run: npm run e2e:lint
+
+  android:
+    name: Maestro (Android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # PR では `e2e` ラベルが付いているときだけ。ラベルが無いと skip されるので、
+    # このジョブを required status check にしてはいけない（永久に pending になる）。
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve the flow scope
+        id: scope
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            scope=smoke
+          else
+            scope="${{ inputs.scope || 'full' }}"
+          fi
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          # full のときは引数なし。.maestro/config.yaml の excludeTags が manual を外す。
+          if [ "$scope" = "smoke" ]; then
+            echo "args=--include-tags smoke" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "### E2E scope: \`$scope\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            example/package-lock.json
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      # ci.yml の android ジョブと同一のキー。runner.os が同じ Linux なので、
+      # 先に走ったほうが温めたキャッシュをそのまま拾える。
+      - name: Cache voicevox-core artifacts
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/expo-voicevox
+          key: >-
+            voicevox-${{ runner.os }}-${{ hashFiles('plugin/src/core/versions.ts',
+            'plugin/src/core/artifacts.generated.ts', 'example/app.json') }}
+
+      # prepare が plugin/build/withVoicevox を作るので prebuild より先に必要。
+      - run: npm ci
+
+      - name: Install example dependencies
+        run: npm ci
+        working-directory: example
+
+      - name: Prebuild the example app (Android)
+        run: npx expo prebuild --platform android --no-install
+        working-directory: example
+
+      # エミュレータは x86_64 なので ABI を 1 つに絞る（既定は arm64-v8a,x86_64）。
+      # NDK のビルド時間と APK サイズがおおよそ半分になる。
+      # assembleRelease は JS バンドルを APK に焼くので Metro は要らず、
+      # release も signingConfigs.debug を使うので keystore の用意も要らない。
+      - name: Build the release APK
+        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=x86_64 --console=plain
+        working-directory: example/android
+
+      - name: Install Maestro
+        run: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      # これが無いとエミュレータがソフトウェアエミュレーションになり、合成が現実的な時間で終わらない。
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Cache the AVD snapshot
+        uses: actions/cache@v6
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-34-google_apis-x86_64
+
+      # キャッシュが無いときだけ、空のフローで 1 度起動してスナップショットを作る。
+      # ここは音を鳴らさないので -noaudio でよい。
+      - name: Create the AVD snapshot
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: false
+          script: echo "Generated the AVD snapshot."
+
+      # ランナーにサウンドデバイスが無いままだと 02-synthesis が
+      # 「Assertion is false: .*#\d+ started.*, id: speech-state」で落ちる。JS 側は
+      # 「再生中」まで進むのに、ネイティブの再生器が started を観測させないまま終わる。
+      #
+      # 紛らわしいが、このシンクを立てても emulator の
+      # 「Could not init `pa` audio driver」は消えない。メッセージは無視してよく、
+      # 見るべきは 02-synthesis が通るかどうか（入れると通り、外すと落ちるのを確認済み）。
+      - name: Start a dummy PulseAudio sink
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=dummy
+
+      # 音が鳴ったかどうかは speech-state（ネイティブの再生器が出すイベント）で見ている。
+      # このアクションの emulator-options の既定値には -noaudio が入っているので、
+      # 明示的に上書きして音声デバイスを残すこと。
+      # 殺すと 02-synthesis の検証が意味を失う。
+      - name: Run the Maestro flows
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
+          disable-animations: true
+          # 200MB の APK を入れた直後は PackageManager の dexopt でエミュレータが忙しく、
+          # スナップショットから復元した直後の adb が「device offline」で一瞬落ちる。
+          # 実際 00-assets と 01-initialize が launchApp の時点で
+          # DeviceServerDiedException を踏んだ。install のあとに落ち着くまで待つこと。
+          #
+          # 行末のバックスラッシュで継続してはいけない。このアクションは script を
+          # @actions/exec の引数分割に通すので、\ がそのまま引数として渡り
+          # 「Flow path does not exist: .../\」で落ちる。1 コマンド 1 行で書くこと。
+          script: |
+            adb install -r example/android/app/build/outputs/apk/release/app-release.apk
+            adb wait-for-device
+            sleep 60
+            adb wait-for-device
+            maestro test ${{ steps.scope.outputs.args }} --format junit --output maestro-report.xml --debug-output .maestro/output --flatten-debug-output .maestro
+
+      # --debug-output を明示しているので、スクリーンショットとログはここに集まる
+      # （既定の ~/.maestro/tests/{timestamp}/ はランナーから拾いにくい）。
+      - name: Upload the Maestro artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: maestro-android-${{ steps.scope.outputs.scope }}
+          path: |
+            .maestro/output
+            maestro-report.xml
+          if-no-files-found: ignore
