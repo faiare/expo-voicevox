@@ -153,14 +153,41 @@ Metro を起動し直してからアプリを再起動する**のが確実。app
 - **js**: `npm ci` → `npm run lint` → `npm test` → `npm test plugin` → example で `npm ci` と `tsc --noEmit`。
 - **android**: 上に加えて `npx expo prebuild --platform android --no-install` → `./gradlew :faiare-expo-voicevox:testDebugUnitTest`。
 
-**Maestro の E2E は CI に入れていない**。ubuntu-latest では iOS シミュレータが動かず、Android も
-エミュレータと prebuild の 130MB が要る。ローカルで回す前提。載せるなら `--include-tags smoke` から。
+**Maestro の E2E は `ci.yml` には入っていない**。別ワークフロー（`e2e.yml`）で、既定では PR で回らない。下の「Maestro の E2E」節を読むこと。
 
 CI 特有の前提が 3 つある。
 
 - **`npm ci` はルートの `package-lock.json` が `package.json` と同期していないと即失敗する**。ローカルの `npm install` は黙って動き続けるので気付けない。依存を触ったら lock も一緒にコミットすること。
 - **`npm ci` は `prepare`（`internal/module_scripts/prepare.js`）を走らせる**ので、build/ と plugin/build/ の tsc はこの時点で通っている必要がある。逆に言えば prebuild が `app.plugin.js` から require する `plugin/build/withVoicevox` もこれで用意される。
 - **`example/android` は生成物なのでリポジトリに無い**。Gradle を回すには prebuild が要り、そこで config plugin が 130MB 超を取得する。`~/.cache/expo-voicevox` を `actions/cache` で使い回しており、キーは `plugin/src/core/versions.ts` / `plugin/src/core/artifacts.generated.ts` / `example/app.json` のハッシュ。バージョンや `voices` を変えると当然取り直しになる。
+
+#### Maestro の E2E（`e2e.yml`）
+
+`.github/workflows/e2e.yml` が Maestro のフローを回す。**`ci.yml` とは別ファイル**（トリガもランナー要件も違い、`concurrency` を共有すると E2E のキャンセルが lint まで巻き込む）。**現状は Android（ubuntu-latest）のみで、iOS は入っていない**。
+
+| トリガ | 範囲 |
+|---|---|
+| PR（`e2e` ラベルが付いているときだけ） | `--include-tags smoke`（00/01/02 の 3 本） |
+| main への push | manual 以外の全フロー |
+| `workflow_dispatch` | 入力 `scope` で smoke / full を選ぶ |
+
+`check-syntax` だけの `lint` ジョブは端末が要らないので、ラベルに関係なく全 PR で回る。
+
+ネイティブを触ったときは手元から任意のブランチに投げるのが主経路。
+
+```bash
+gh workflow run e2e.yml --ref feat/xxx -f scope=smoke && gh run watch
+```
+
+- **`e2e.yml` が main に載るまで `workflow_dispatch` は使えない**（イベントの登録が default ブランチの定義に依存する）。載る前の検証は PR に `e2e` ラベルを付ける形でしかできない（`pull_request` は head ブランチのワークフローファイルを使う）。
+- **ラベルの無い PR ではジョブが skip されるので、required status check にしてはいけない**。永久に pending になる。
+- **cron は入れていない**。依存は lock と `plugin/src/core/versions.ts` でピン留め済みで、コミット無しに壊れる要素はランナーイメージの更新くらいしかない。しかも `~/.cache/expo-voicevox` が効いている限り取得経路は再検証されないので、定期実行しても「上流から消えた」は検知できない。Maestro CLI も `MAESTRO_VERSION: 2.8.0` で固定してある。
+- **エミュレータの `emulator-options` から `-noaudio` を外してある**。`reactivecircus/android-emulator-runner` の既定値には入っているが、`speak` 系の検証は `AudioTrack` が実際に出す `speech-state` を見ているので、音声デバイスを殺すと `02-synthesis` が意味を失う。スナップショット作成用の空回しのほうには付けてよい。
+- **APK は `-PreactNativeArchitectures=x86_64` で 1 ABI に絞る**（既定は `arm64-v8a,x86_64`）。エミュレータは x86_64 なので、NDK のビルド時間と APK サイズがおおよそ半分になる。`assembleRelease` は JS を焼き込むので Metro は要らず、release も `signingConfigs.debug` を使うので keystore も要らない。
+- **Debug ではなく Release で回す**。Debug は LogBox がタップを吸う（`.maestro/README.md`）。
+- アセットのキャッシュは `ci.yml` の `android` ジョブと**同一のキー**。`runner.os` が同じ `Linux` なので、先に走ったほうが温めたものをそのまま拾う。AVD のスナップショットは別途 `~/.android/avd` をキャッシュしている。
+- 失敗すると `.maestro/output`（`--debug-output`）と `maestro-report.xml` が artifact に上がる。既定の `~/.maestro/tests/{timestamp}/` はランナーから拾いにくいので明示している。
+- 所要時間の目安は PR（smoke・キャッシュ命中）で 15 分前後、main への push（full・cold）で 45 分前後。
 
 #### Expo のメジャー追随（`expo-major-watch.yml`）
 
