@@ -4,13 +4,16 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+// react-native の SafeAreaView は 0.86 で非推奨（iOS でしか効かず、Android では素の
+// View になる）。dev ビルドではその警告が LogBox の通知として画面下部に居座り、
+// 見えている黒帯より広い範囲のタップを吸ってしまうので、推奨どおり差し替えてある。
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 /** トーク合成に使えるのは talk 系のスタイルのみ。 */
 const TALK_STYLE_TYPES = ['talk', 'streaming_talk'];
@@ -457,7 +460,15 @@ export default function App() {
         ) : null}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      {/*
+        keyboardDismissMode は入力欄より下にあるボタンを押せるようにするために要る。
+        keyboardShouldPersistTaps はアプリ内のタップを透過させるだけで、キーボードが
+        覆っている座標そのものは奪われたままなので、スクロールで閉じられる経路を残す。
+      */}
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag">
         <Text style={styles.header}>expo-voicevox</Text>
 
         <Group testID="section-lib" name="1. ライブラリ">
