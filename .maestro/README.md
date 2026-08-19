@@ -83,6 +83,42 @@ iOS では `Pressable` の子の `Text` が親へマージされ、アクセシ�
 ある（`example/App.tsx` の `Toggle`）。値を読みたい要素を新しく足すときも、
 タップ領域の中に入れないこと。
 
+### キーボードは入力の直後に畳む
+
+入力欄に触れるとキーボードが画面の下半分を覆い、その下にあるボタンやステッパーは
+タップを吸われて反応しない。リストの先頭までスクロールしても、覆われた位置より上へ
+出てこない要素は押せないままになる（`05-user-dict` の `initialize()` がこれで落ちて
+いた）。
+
+- 値の変更（品詞・優先度）は**入力より先に**済ませる。
+- 入力の直後に `pressKey: Enter` を送る。辞書の入力欄は単一行なので blur して
+  キーボードが畳まれる。
+- `hideKeyboard` は iOS だと閉じ方を見つけられずに落ちることがあるので使わない。
+
+### dev ビルドの警告を 0 件に保つ
+
+RN の LogBox は警告が 1 件でもあると画面下部に通知を出し、**見えている黒帯より
+広い範囲のタップを吸う**。黒帯に重なっていないボタンでも押せなくなり、Maestro は
+「タップした」と報告したまま何も起きない（`02-synthesis` の `speak()` がこれで
+落ちていた）。Release では出ないが、フローを書いている間は Debug なので、警告は
+残さず潰すこと。
+
+`react-native` の `SafeAreaView` は 0.86 で非推奨になっていて、これが唯一の警告
+だった。推奨どおり `react-native-safe-area-context` へ移してある。ついでに、
+`react-native` の `SafeAreaView` は **iOS でしか効かない**（Android では素の View）
+ので、上部の固定バーがシステムのステータスバーの裏に潜り、Android の
+アクセシビリティツリーから `status-busy` ごと消えていた問題も同時に直っている。
+
+### Android のドライバが起動しないとき
+
+`Maestro Android driver did not start up in time` で始まる前に落ちることがある。
+端末側に残ったドライバを消してから回し直す。
+
+```bash
+adb uninstall dev.mobile.maestro
+adb uninstall dev.mobile.maestro.test
+```
+
 ### 端末の状態を壊さない
 
 `clearState` は既定のフローでは使わない。Android では展開済みのモデルと辞書
