@@ -164,6 +164,8 @@ CI 側の作りで踏みやすいのは 2 点。
   の既定値には入っているが、音が鳴ったかの判断は `speech-state`（`AudioTrack` が出す実際の状態遷移）に
   頼っているので、音声デバイスを殺すと `02-synthesis` の検証が空になる。
 - **APK は `-PreactNativeArchitectures=x86_64` の Release**。Debug は LogBox がタップを吸う。
+- **`adb install` の直後は待つ**。200MB の APK の dexopt でエミュレータが忙しく、adb が
+  `device offline` で一瞬落ちて `launchApp` が `DeviceServerDiedException` になる。
 - **エミュレータの前に `pulseaudio` のダミーシンクを立てている**。無いと `02-synthesis` が
   `speech-state` の `started` で落ちる。**シンクを立ててもエミュレータの
   「Could not init `pa` audio driver」は消えない**ので、あのメッセージでは判断しないこと。

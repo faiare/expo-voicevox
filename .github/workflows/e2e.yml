@@ -192,11 +192,19 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
+          # 200MB の APK を入れた直後は PackageManager の dexopt でエミュレータが忙しく、
+          # スナップショットから復元した直後の adb が「device offline」で一瞬落ちる。
+          # 実際 00-assets と 01-initialize が launchApp の時点で
+          # DeviceServerDiedException を踏んだ。install のあとに落ち着くまで待つこと。
+          #
           # 行末のバックスラッシュで継続してはいけない。このアクションは script を
           # @actions/exec の引数分割に通すので、\ がそのまま引数として渡り
           # 「Flow path does not exist: .../\」で落ちる。1 コマンド 1 行で書くこと。
           script: |
             adb install -r example/android/app/build/outputs/apk/release/app-release.apk
+            adb wait-for-device
+            sleep 60
+            adb wait-for-device
             maestro test ${{ steps.scope.outputs.args }} --format junit --output maestro-report.xml --debug-output .maestro/output --flatten-debug-output .maestro
 
       # --debug-output を明示しているので、スクリーンショットとログはここに集まる
