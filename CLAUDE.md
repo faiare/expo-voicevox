@@ -33,6 +33,13 @@ npm run setup:voicevox # voicevox-core のバイナリを取得（開発者用�
 npm run gen:vvm-catalog # VVM のキャラクター対応表を再生成（メンテ用・要ネットワーク）
 npm run refresh:artifact-digests # 配布物の size / sha256 の固定表を作り直す（メンテ用・要ネットワーク）
 npm run check:expo-major # npm の expo@latest がこのリポジトリより新しいメジャーか調べる
+npm run e2e            # Maestro の E2E（要ビルド済みアプリ。下の「E2E」を読むこと）
+npm run e2e:ios        # iOS シミュレータだけで回す
+npm run e2e:android    # Android エミュレータだけで回す
+npm run e2e:smoke      # smoke タグだけ（起動 → アセット → 初期化 → 合成/再生）
+npm run e2e:lint       # 端末なしでフローの構文だけ見る
+npm run e2e:build:ios  # Release で example をビルド（Metro が要らない）
+npm run e2e:dev:ios    # Debug で example をビルド（別途 Metro が要る）
 npm run open:ios       # example/ios を Xcode で開く
 npm run open:android   # example/android を Android Studio で開く
 ```
@@ -87,16 +94,15 @@ xcrun simctl launch <UDID> expo.modules.voicevox.example
 cd example && npx expo run:android
 ```
 
-UI 操作は iOS が `axe`（`axe describe-ui --udid <UDID>` で座標を取り `axe tap --label`）、
-Android が `adb shell uiautomator dump` + `adb shell input tap`。エージェントで回すときの注意:
+UI 操作は **Maestro に任せる**（下の「E2E（Maestro）」）。座標を自分で計算する必要は無く、
+`scrollUntilVisible` が目的の要素を画面の中央まで運んでくれるので、ビューポートの外を押していた・
+スワイプの慣性で行き過ぎた・Android の下部トーストにタップを吸われた、といった事故が起きない。
+
+Maestro のセレクタで拾えないものを調べるときだけ、iOS は `axe describe-ui --udid <UDID>`、
+Android は `adb shell uiautomator dump` を探索用に使う（`maestro hierarchy` で足りることが多い）。
+エージェントで回すときの注意:
 
 - **`until` の無限ループを書かない**。反応しない要素を永久に待ち続ける。必ず回数上限を付ける。
-- **座標はビューポート内に収まっているか確かめる**。iOS の `describe-ui` はスクロール外の要素も
-  返すので、y がビューポート（iPhone 17 Pro なら 874pt）の外なら押しても何も起きない。
-- **スワイプには慣性が付く**。`--duration` を 1.2 秒ほどに伸ばした遅いドラッグだと慣性が付かず、
-  目的の位置に寄せやすい。
-- Android は「Open debugger to view warnings.」のトーストが画面下部に重なる。その下のボタンは
-  タップが吸われるので、先にトーストの ✕ を押すかスクロールして中央に寄せる。
 - **エミュレータや Metro はツールのバックグラウンド実行で起動する**。`nohup ... &` だと
   ツール呼び出しの終了時にプロセスごと回収されて落ちる（macOS に `setsid` は無い）。
 
@@ -107,12 +113,42 @@ Metro を起動し直してからアプリを再起動する**のが確実。app
 
 `src/` を変更したら **`npm run build` を先に実行**すること。`package.json` の `main` は `build/index.js` で、example は build 出力を解決する。
 
+### E2E（Maestro）
+
+`.maestro/` にフローがある。**手順と設計は `.maestro/README.md` に書いてあるので、
+フローを触る前にそちらを読むこと。** ここには要点だけ残す。
+
+- 前提は Maestro 2.8.0 / Java 17 と、**ビルド済みの example が端末に入っていること**。
+  appId は iOS / Android とも `expo.modules.voicevox.example`。
+- **フローを書いている間は Debug + Metro**（testID を足すたびにリビルドしていられない）、
+  **一通り書けたら Release で通す**（dev トーストも LogBox も出ず、Metro が古い JS を配る事故も
+  起きない）。
+- **音が鳴ったかは Maestro からは分からない**。ネイティブの再生器が出すイベント（`speech-state`）と、
+  合成結果に載る再生時間で確かめている。キャッシュは 2 回目が速いことをスクリプトで数値として比べる。
+- **テキストの一致は完全一致の正規表現**。部分一致には `.*` を付ける。複数行にまたがるステータスは
+  `(?s)` を頭に置く。
+- **iOS では `Pressable` の子の `Text` が親へマージされて消える**。読みたい値はタップ領域の外に置く
+  （`Toggle` はそのために親子から兄弟へ組み替えてある）。
+- **Maestro は画面に映っている要素しか見ない**。位置に依存する値は `scrollUntilVisible` で運んでから
+  見る。「消えたこと」を見るときは、消える前に見えていたことを先に確かめないと空振りになる。
+- **入力欄に触れるとキーボードが画面の下半分を覆う**。その下にある要素はタップが吸われるので、
+  値の変更は入力より先に済ませる。`hideKeyboard` は iOS だと落ちることがあるので使っていない。
+- Android の `initialize()` は暗黙に `prepareAssets()` を呼ぶ。初回は 130MB の展開を含むので、
+  初期化と合成の待ちは 300 秒にしてある。`00-assets` を先頭に固定してこのコストを 1 本目で払う。
+- **`clearState` は既定のフローでは使わない**。Android では展開済みのモデルと辞書ごと消える。
+  中断の検証（`90-prepare-cancel`）だけは避けられないので `manual` タグで既定から外してある。
+- `.mcp.json` に Maestro の MCP サーバを登録してあるので、フローを書いて即実行し、
+  失敗した画面をその場で見て直せる。
+
 ### CI
 
 `.github/workflows/ci.yml` が push（main）と PR で 2 ジョブ回す。どちらも ubuntu-latest で、iOS は macOS runner の実行時間が見合わないので入れていない（`xcodebuild` は手元で通す）。
 
 - **js**: `npm ci` → `npm run lint` → `npm test` → `npm test plugin` → example で `npm ci` と `tsc --noEmit`。
 - **android**: 上に加えて `npx expo prebuild --platform android --no-install` → `./gradlew :faiare-expo-voicevox:testDebugUnitTest`。
+
+**Maestro の E2E は CI に入れていない**。ubuntu-latest では iOS シミュレータが動かず、Android も
+エミュレータと prebuild の 130MB が要る。ローカルで回す前提。載せるなら `--include-tags smoke` から。
 
 CI 特有の前提が 3 つある。
 
