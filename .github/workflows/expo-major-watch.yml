@@ -1,0 +1,134 @@
+name: Expo major watch
+
+# Expo の SDK メジャーが上がったことに気付く経路が人の記憶しか無かったので、週次で npm を見る。
+# Dependabot ではなく issue にしているのは、メジャー追随がネイティブを含む手作業のチェックリストで、
+# 自動生成された PR より作業チケットの方が実態に合うため。
+on:
+  schedule:
+    # 毎週月曜 03:17 UTC（12:17 JST）。SDK メジャーは年に数回なのでこの粒度で足りる。
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      simulate_version:
+        description: 'expo@latest の代わりに使うバージョン（例: 58.0.0）。issue 作成まで手で確かめるとき用。'
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  check:
+    name: check expo@latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+
+      # npm ci はしないので cache 指定は要らない。node のバージョンだけ ci.yml に揃える。
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      # 「追随しているメジャー」は package.json の devDependencies.expo だけを見る。
+      # 上げれば自動で鳴り止むので、現在のバージョンをここに二重管理しない。
+      - id: check
+        name: Compare the latest Expo major with ours
+        run: node scripts/check-expo-major.mjs
+        env:
+          EXPO_LATEST_OVERRIDE: ${{ inputs.simulate_version }}
+
+      # gh CLI ではなく github-script を使う。ランナー同梱物に依存せず、
+      # 重複判定・ラベル作成・issue 作成を 1 ステップで書けるため。
+      - name: Open an issue
+        if: steps.check.outputs.needs_issue == 'true'
+        uses: actions/github-script@v9
+        env:
+          CURRENT_MAJOR: ${{ steps.check.outputs.current_major }}
+          LATEST_MAJOR: ${{ steps.check.outputs.latest_major }}
+          LATEST_VERSION: ${{ steps.check.outputs.latest_version }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const { CURRENT_MAJOR, LATEST_MAJOR, LATEST_VERSION } = process.env;
+            const { owner, repo } = context.repo;
+            const title = `Expo SDK ${LATEST_MAJOR} に追随する`;
+
+            // 重複判定は search API ではなく一覧で行う。検索インデックスの遅延に左右されず、
+            // 一度閉じた issue が翌週また生えることもない（state: 'all' で閉じたものも見る）。
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'all',
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => issue.title === title);
+            if (existing) {
+              core.info(`#${existing.number} が既にあるので何もしません: ${title}`);
+              return;
+            }
+
+            // このリポジトリには GitHub 既定のラベルしか無いので、初回だけ自分で作る。
+            const label = 'dependencies';
+            try {
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: label,
+                color: '0366d6',
+                description: '依存パッケージの更新',
+              });
+            } catch (error) {
+              // 422 = already_exists。2 回目以降はこちらを通る。
+              if (error.status !== 422) {
+                throw error;
+              }
+            }
+
+            const body = fs
+              .readFileSync('.github/expo-major-issue.md', 'utf8')
+              .replaceAll('{{CURRENT_MAJOR}}', CURRENT_MAJOR)
+              .replaceAll('{{LATEST_MAJOR}}', LATEST_MAJOR)
+              .replaceAll('{{LATEST_VERSION}}', LATEST_VERSION);
+
+            const created = await github.rest.issues.create({
+              owner,
+              repo,
+              title,
+              body,
+              labels: [label],
+            });
+            core.info(`created #${created.data.number}: ${title}`);
+
+  keepalive:
+    name: keep the schedule alive
+    # public リポジトリのスケジュールワークフローは、60 日間リポジトリ活動が無いと GitHub に
+    # 自動で無効化される。無効化されると workflow_dispatch も含めて丸ごと止まり、Expo の
+    # メジャーを黙って取りこぼす。45 日静かだったら空コミットで活動を作って延命する。
+    #
+    # GITHUB_TOKEN で push したコミットはワークフローを起こさないので、これで ci.yml
+    # （130MB の prebuild 込み）や publish.yml が回ることはない。[skip ci] も要らない。
+    #
+    # 手動実行では走らせない。手で叩いた時点でリポジトリに人が居るし、検証のたびに
+    # 空コミットが増えても困るため。
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Push an empty commit if the repository has been quiet
+        run: |
+          age=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "last commit: ${age} days ago"
+          # bash -e で走るので `[ ... ] && exit 0` と書くと偽のときにステップが失敗する。
+          if [ "$age" -lt 45 ]; then
+            echo 'まだ活動しているので何もしません。'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit --allow-empty -m 'chore: keep the scheduled workflow alive'
+          git push origin HEAD:main

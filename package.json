@@ -16,7 +16,8 @@
     "open:android": "node internal/module_scripts/open-android.js",
     "setup:voicevox": "tsc --build plugin && node scripts/fetch-voicevox-core.mjs",
     "gen:vvm-catalog": "tsc --build plugin && node scripts/gen-vvm-catalog.mjs",
-    "refresh:artifact-digests": "tsc --build plugin && node scripts/refresh-artifact-digests.mjs"
+    "refresh:artifact-digests": "tsc --build plugin && node scripts/refresh-artifact-digests.mjs",
+    "check:expo-major": "node scripts/check-expo-major.mjs"
   },
   "files": [
     "app.plugin.js",

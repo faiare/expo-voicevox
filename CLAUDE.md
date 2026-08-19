@@ -32,6 +32,7 @@ npm run release:version # changeset version + package-lock.json の同期（CI �
 npm run setup:voicevox # voicevox-core のバイナリを取得（開発者用）
 npm run gen:vvm-catalog # VVM のキャラクター対応表を再生成（メンテ用・要ネットワーク）
 npm run refresh:artifact-digests # 配布物の size / sha256 の固定表を作り直す（メンテ用・要ネットワーク）
+npm run check:expo-major # npm の expo@latest がこのリポジトリより新しいメジャーか調べる
 npm run open:ios       # example/ios を Xcode で開く
 npm run open:android   # example/android を Android Studio で開く
 ```
@@ -118,6 +119,16 @@ CI 特有の前提が 3 つある。
 - **`npm ci` はルートの `package-lock.json` が `package.json` と同期していないと即失敗する**。ローカルの `npm install` は黙って動き続けるので気付けない。依存を触ったら lock も一緒にコミットすること。
 - **`npm ci` は `prepare`（`internal/module_scripts/prepare.js`）を走らせる**ので、build/ と plugin/build/ の tsc はこの時点で通っている必要がある。逆に言えば prebuild が `app.plugin.js` から require する `plugin/build/withVoicevox` もこれで用意される。
 - **`example/android` は生成物なのでリポジトリに無い**。Gradle を回すには prebuild が要り、そこで config plugin が 130MB 超を取得する。`~/.cache/expo-voicevox` を `actions/cache` で使い回しており、キーは `plugin/src/core/versions.ts` / `plugin/src/core/artifacts.generated.ts` / `example/app.json` のハッシュ。バージョンや `voices` を変えると当然取り直しになる。
+
+#### Expo のメジャー追随（`expo-major-watch.yml`）
+
+`.github/workflows/expo-major-watch.yml` が週次（月曜 03:17 UTC）で npm の `expo@latest` を見て、メジャーがこのリポジトリより新しければ「Expo SDK NN に追随する」という issue を 1 本立てる。判定は `scripts/check-expo-major.mjs`、本文のひな形は `.github/expo-major-issue.md`。Dependabot は入れていない（メジャー追随はネイティブを含む手作業のチェックリストなので、PR より作業チケットが合う）。
+
+- **「現在のバージョン」の出どころは `package.json` の `devDependencies.expo` だけ**。上げれば自動で鳴り止む。控えを別の場所に置かないこと。
+- 重複判定は issue のタイトル完全一致（`state: 'all'`）。**一度閉じた issue は再作成されない**。
+- 手元で試すなら `EXPO_LATEST_OVERRIDE=58.0.0 npm run check:expo-major`。ワークフローの `workflow_dispatch` にも同じ入力（`simulate_version`）がある。
+- **public リポジトリのスケジュールワークフローは 60 日間リポジトリ活動が無いと GitHub に自動で無効化され、`workflow_dispatch` ごと止まる**。対策として同じファイルに `keepalive` ジョブがあり、最新コミットが 45 日より古いときだけ main に空コミットを push する。**GITHUB_TOKEN で push したコミットはワークフローを起こさない**ので、これで `ci.yml` や `publish.yml` が回ることはない（履歴の `chore: keep the scheduled workflow alive` はこれ）。
+- それでも無効化されてしまったら `gh workflow enable expo-major-watch.yml` で戻す。
 
 ### リリース（changesets + npm Trusted Publishing）
 
