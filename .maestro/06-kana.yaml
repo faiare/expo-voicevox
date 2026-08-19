@@ -1,0 +1,30 @@
+# カナ（AquesTalk 風記法）からの合成。
+#
+# 記法が壊れていれば createAudioQueryFromKana が投げるので、エラーが出ずに
+# WAV のパスが返ること自体がこの経路の生存確認になる。
+# 入力欄の既定値をそのまま使い、日本語は打ち込まない。
+appId: expo.modules.voicevox.example
+name: 06-kana
+tags:
+  - feature
+---
+- runFlow: subflows/initialize.yaml
+
+- scrollUntilVisible:
+    element:
+      id: 'btn-kana-speak'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'input-kana'
+- tapOn:
+    id: 'btn-kana-speak'
+- runFlow: subflows/wait-idle-long.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*合成しました: /.*\.wav.*'
+- assertNotVisible:
+    id: 'status-error'
+
+- takeScreenshot: 06-kana

@@ -1,0 +1,26 @@
+# ワークスペース設定。`maestro test .maestro` はこのファイルを自動で読む。
+
+# トップレベルの *.yaml だけをフローとして扱う。これを書かないと subflows/ の
+# 部品まで独立したフローとして実行されてしまう。
+flows:
+  - '*.yaml'
+
+# 端末の状態を壊すフロー（clearState を伴うもの）は既定では回さない。
+excludeTags:
+  - manual
+
+executionOrder:
+  # ローカルでは 1 本落ちても残りの結果が欲しい。
+  continueOnFailure: true
+  # 00-assets を先頭に固定する。Android は初回だけ APK 内の 130MB を端末へ
+  # 展開するので、ここで一度だけ払って以降のフローを温まった状態で走らせる。
+  flowsOrder:
+    - 00-assets
+    - 01-initialize
+    - 02-synthesis
+    - 03-params
+    - 04-accent
+    - 05-user-dict
+    - 06-kana
+    - 07-cache
+    - 08-finalize

@@ -1,0 +1,123 @@
+# アクセント句の編集。
+#
+# 音高や母音の長さの値は voicevox-core が決めるので、絶対値では比べられない。
+# 書式が保たれていることと、編集した句でそのまま合成が通ることで確かめる。
+appId: expo.modules.voicevox.example
+name: 04-accent
+tags:
+  - feature
+---
+- runFlow: subflows/initialize.yaml
+
+- scrollUntilVisible:
+    element:
+      id: 'btn-accent-load'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-accent-load'
+- runFlow: subflows/wait-idle-long.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*アクセント句を取得しました.*'
+- assertVisible:
+    id: 'accent-phrase-0'
+- assertVisible:
+    id: 'mora-chip-0-0'
+
+# アクセント核を動かす（digits 0 なので整数表示）。
+- scrollUntilVisible:
+    element:
+      id: 'accent-core-0-value'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'accent-core-0-value'
+    text: '\d+'
+- tapOn:
+    id: 'accent-core-0-plus'
+- tapOn:
+    id: 'accent-core-0-minus'
+
+# モーラを選ぶと、音高と母音の長さを個別に変えられる UI が出る。
+- scrollUntilVisible:
+    element:
+      id: 'mora-chip-0-0'
+    direction: UP
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'mora-chip-0-0'
+# 選択したモーラの編集欄は、すべての句を並べたあとに出る。句の数だけ下にあるので
+# スクロールしてから見る。
+- scrollUntilVisible:
+    element:
+      id: 'selected-mora-label'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'selected-mora-label'
+- scrollUntilVisible:
+    element:
+      id: 'selected-mora-pitch-value'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'selected-mora-pitch-value'
+    text: '\d+\.\d{2}'
+- tapOn:
+    id: 'selected-mora-pitch-plus'
+- tapOn:
+    id: 'selected-mora-length-plus'
+
+# 疑問形にする。
+- scrollUntilVisible:
+    element:
+      id: 'accent-interrogative-0'
+    direction: UP
+    centerElement: true
+    speed: 30
+    timeout: 30000
+- assertVisible:
+    id: 'accent-interrogative-0-value'
+    text: 'OFF'
+- tapOn:
+    id: 'accent-interrogative-0'
+- assertVisible:
+    id: 'accent-interrogative-0-value'
+    text: 'ON'
+
+# 編集した句をそのまま合成する。replaceMoraData は通さない（通すと手で変えた
+# 音高が上書きされる）。
+- scrollUntilVisible:
+    element:
+      id: 'btn-accent-speak'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-accent-speak'
+- runFlow: subflows/wait-idle-long.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*合成しました: /.*\.wav.*'
+
+# 読みを付け直す。
+- scrollUntilVisible:
+    element:
+      id: 'btn-accent-replace-mora-data'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-accent-replace-mora-data'
+- runFlow: subflows/wait-idle-long.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*音素長と音高を生成し直しました.*'
+
+- takeScreenshot: 04-accent

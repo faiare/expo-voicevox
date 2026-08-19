@@ -1,0 +1,68 @@
+# initialize() で Synthesizer を組み立て、getCharacters() の結果が UI に出るまで。
+appId: expo.modules.voicevox.example
+name: 01-initialize
+tags:
+  - smoke
+  - core
+---
+- runFlow: subflows/launch.yaml
+
+# 起動直後は未初期化。
+- assertVisible:
+    id: 'status-initialized'
+    text: '初期化: いいえ'
+- assertVisible:
+    id: 'lib-initialized'
+    text: 'いいえ'
+
+# finalize() は初期化前は押せない。
+- scrollUntilVisible:
+    element:
+      id: 'btn-finalize'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'btn-finalize'
+    enabled: false
+
+- tapOn:
+    id: 'btn-initialize'
+- extendedWaitUntil:
+    visible:
+      id: 'status-text'
+      text: '.*初期化が完了しました.*'
+    timeout: 300000
+
+# 上部の固定バーはスクロール位置に関係なく読める。
+- assertVisible:
+    id: 'status-initialized'
+    text: '初期化: はい'
+- assertVisible:
+    id: 'btn-finalize'
+    enabled: true
+
+# セクション 1 の表示も追随している。初期化でスタイルの一覧が増えて画面が伸びる
+# ので、上まで戻ってから見る。
+- scrollUntilVisible:
+    element:
+      id: 'lib-initialized'
+    direction: UP
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'lib-initialized'
+    text: 'はい'
+
+# getCharacters() が返したスタイルがチップになっている。app.json の voices は
+# zundamon/normal だけだが、同じ 0.vvm に入っている他のスタイルも一緒に読める。
+- scrollUntilVisible:
+    element:
+      id: 'style-chip-3'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'style-chip-3'
+
+- takeScreenshot: 01-initialized

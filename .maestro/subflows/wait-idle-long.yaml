@@ -1,0 +1,14 @@
+# wait-idle の待ち時間を伸ばした版。
+#
+# Android の初回アセット展開（130MB）と、エミュレータ上の合成に使う。
+# タイムアウトに環境変数を渡すと解釈が怪しいので、待ち時間ごとにファイルを分けてある。
+appId: expo.modules.voicevox.example
+---
+- extendedWaitUntil:
+    visible:
+      id: 'status-busy'
+      text: 'IDLE'
+    timeout: 300000
+
+- assertNotVisible:
+    id: 'status-error'

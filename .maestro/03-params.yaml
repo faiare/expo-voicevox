@@ -1,0 +1,101 @@
+# 合成パラメータの直接指定。
+#
+# Stepper の値は toFixed で桁を固定して描画しているので、増減の結果は
+# 文字列として決定的に比べられる。
+appId: expo.modules.voicevox.example
+name: 03-params
+tags:
+  - feature
+---
+- runFlow: subflows/initialize.yaml
+
+- scrollUntilVisible:
+    element:
+      id: 'section-params'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+
+# 話速: 1.00 から 0.1 刻みで 2 回上げる。
+- assertVisible:
+    id: 'param-speed-value'
+    text: '1.00'
+- repeat:
+    times: 2
+    commands:
+      - tapOn:
+          id: 'param-speed-plus'
+- assertVisible:
+    id: 'param-speed-value'
+    text: '1.20'
+
+# 開始の無音: 0.10 から 0.05 刻みで 2 回下げると 0.00 で下限に当たる。
+- scrollUntilVisible:
+    element:
+      id: 'param-pre-value'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'param-pre-value'
+    text: '0.10'
+- repeat:
+    times: 2
+    commands:
+      - tapOn:
+          id: 'param-pre-minus'
+- assertVisible:
+    id: 'param-pre-value'
+    text: '0.00'
+# 下限を割らない。
+- tapOn:
+    id: 'param-pre-minus'
+- assertVisible:
+    id: 'param-pre-value'
+    text: '0.00'
+
+# 疑問文の語尾上げを切り替える。
+- scrollUntilVisible:
+    element:
+      id: 'param-upspeak'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'param-upspeak-value'
+    text: 'ON'
+- tapOn:
+    id: 'param-upspeak'
+- assertVisible:
+    id: 'param-upspeak-value'
+    text: 'OFF'
+
+# 変更したパラメータで実際に合成が通る。
+- scrollUntilVisible:
+    element:
+      id: 'btn-synthesize-play'
+    direction: UP
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-synthesize-play'
+- runFlow: subflows/wait-idle-long.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*合成しました: /.*\.wav.*'
+
+# 既定値に戻す。
+- scrollUntilVisible:
+    element:
+      id: 'btn-params-reset'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-params-reset'
+- assertVisible:
+    id: 'param-speed-value'
+    text: '1.00'
+- assertVisible:
+    id: 'param-pre-value'
+    text: '0.10'

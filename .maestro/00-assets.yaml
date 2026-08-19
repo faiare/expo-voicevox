@@ -1,0 +1,55 @@
+# アセットの状態取得と準備。
+#
+# Android はここで APK 内の 130MB を端末へ展開する。config.yaml の flowsOrder で
+# 先頭に固定してあるので、この 1 本だけが展開のコストを払う。
+# iOS はアプリのバンドルをそのまま読むため、prepareAssets() は即座に返る。
+appId: expo.modules.voicevox.example
+name: 00-assets
+tags:
+  - smoke
+  - assets
+  - slow
+---
+- runFlow: subflows/launch.yaml
+
+# getAssetStatus() は取得も展開も始めずに読める範囲だけを返す。
+- scrollUntilVisible:
+    element:
+      id: 'btn-asset-status'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-asset-status'
+- runFlow: subflows/wait-idle.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*configured: true.*'
+- assertVisible:
+    id: 'status-text'
+    text: '.*assetSource: bundle.*'
+# bundle なので取りに行くバイト数は 0。
+- assertVisible:
+    id: 'status-text'
+    text: '.*downloadBytes: 0MB.*'
+
+# prepareAssets() の成功時のステータスは複数行なので (?s) で改行にもマッチさせる。
+- tapOn:
+    id: 'btn-prepare-assets'
+- runFlow: subflows/wait-idle-long.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '(?s).*辞書: .*'
+- assertVisible:
+    id: 'status-text'
+    text: '(?s).*モデル: .*\.vvm.*'
+
+# 準備が済んだので ready が立つ。
+- tapOn:
+    id: 'btn-asset-status'
+- runFlow: subflows/wait-idle.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*ready: true.*'
+
+- takeScreenshot: 00-assets-ready

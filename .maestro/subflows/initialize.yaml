@@ -1,0 +1,26 @@
+# 起動して initialize() を済ませる。合成を伴うフローの共通の入口。
+appId: expo.modules.voicevox.example
+---
+- runFlow: launch.yaml
+
+- scrollUntilVisible:
+    element:
+      id: 'btn-initialize'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+
+- tapOn:
+    id: 'btn-initialize'
+
+# Android の initialize() は暗黙に prepareAssets() を呼ぶ。初回はここで
+# 130MB の展開が走るので長めに待つ。
+- extendedWaitUntil:
+    visible:
+      id: 'status-text'
+      text: '.*初期化が完了しました.*'
+    timeout: 300000
+
+- assertVisible:
+    id: 'status-initialized'
+    text: '初期化: はい'

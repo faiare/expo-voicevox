@@ -1,0 +1,61 @@
+# prepareAssets() の中断。
+#
+# 中断は「準備が走っている最中」でないと試せない。そのためには展開済みの
+# アセットを clearState で消す必要があり、消すと次の初期化がまた 130MB の
+# 展開からになる。他のフローを巻き添えにするので、既定の suite からは外して
+# manual タグを付けてある。単体で回すこと:
+#
+#   maestro test --include-tags manual .maestro/90-prepare-cancel.yaml
+#
+# iOS はアプリのバンドルをそのまま読むので中断する対象が無い。Android 専用。
+appId: expo.modules.voicevox.example
+name: 90-prepare-cancel
+tags:
+  - manual
+---
+- runFlow:
+    when:
+      platform: android
+    commands:
+      # Android の clearState は展開済みのモデル・辞書ごと消す。
+      - launchApp:
+          clearState: true
+      - swipe:
+          direction: DOWN
+          duration: 100
+      - extendedWaitUntil:
+          visible:
+            id: 'lib-version'
+            text: '.*\d+\.\d+\.\d+.*'
+          timeout: 120000
+
+      - scrollUntilVisible:
+          element:
+            id: 'btn-prepare-assets'
+          direction: DOWN
+          centerElement: true
+          speed: 30
+      - tapOn:
+          id: 'btn-prepare-assets'
+      - extendedWaitUntil:
+          visible:
+            id: 'status-text'
+            text: '.*アセットを準備しています….*'
+          timeout: 30000
+
+      # 準備中に押せる必要があるので、このボタンだけは busy でも無効にしていない。
+      - tapOn:
+          id: 'btn-cancel-prepare'
+      - extendedWaitUntil:
+          visible:
+            id: 'status-text'
+            text: '.*アセットの準備を中断しました（\d+ms）.*'
+          timeout: 120000
+      # 中断は失敗ではないので、エラーとしては出ない。
+      - assertNotVisible:
+          id: 'status-error'
+
+      # 次に回すフローのために展開し直しておく。
+      - tapOn:
+          id: 'btn-prepare-assets'
+      - runFlow: subflows/wait-idle-long.yaml
