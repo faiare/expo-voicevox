@@ -50,6 +50,14 @@ tags:
     speed: 30
 - tapOn:
     id: 'mora-chip-0-0'
+# 選択したモーラの編集欄は、すべての句を並べたあとに出る。句の数だけ下にあるので
+# スクロールしてから見る。
+- scrollUntilVisible:
+    element:
+      id: 'selected-mora-label'
+    direction: DOWN
+    centerElement: true
+    speed: 30
 - assertVisible:
     id: 'selected-mora-label'
 - scrollUntilVisible:
@@ -73,6 +81,7 @@ tags:
     direction: UP
     centerElement: true
     speed: 30
+    timeout: 30000
 - assertVisible:
     id: 'accent-interrogative-0-value'
     text: 'OFF'

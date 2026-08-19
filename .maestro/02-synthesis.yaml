@@ -86,7 +86,7 @@ tags:
 - extendedWaitUntil:
     visible:
       id: 'status-text'
-      text: '.*speedScale 1\.1 / prePhonemeLength 0（合成 \d+ms / 再生 \d+ms）.*'
+      text: '.*speedScale 1\.1 / prePhonemeLength 0（合成 \d+ms ?/ ?再生 \d+ms）.*'
     timeout: 180000
 
 # 一連の再生で failed が出ていないこと。

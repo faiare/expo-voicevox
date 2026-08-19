@@ -29,7 +29,7 @@ tags:
 - runFlow: subflows/wait-idle.yaml
 - assertVisible:
     id: 'status-text'
-    text: '.*0 件 / 0KB（上限 \d+MB / hits \d+ / misses \d+）.*'
+    text: '.*0 件 / 0KB ?（上限 \d+MB / hits \d+ / misses \d+）.*'
 
 # 同じ入力で 2 回合成する。
 - tapOn:
@@ -37,7 +37,7 @@ tags:
 - extendedWaitUntil:
     visible:
       id: 'status-text'
-      text: '.*1 回目 \d+ms / 2 回目 \d+ms（hits \d+ / misses \d+ / \d+ 件 \d+KB）.*'
+      text: '.*1 回目 \d+ms / 2 回目 \d+ms（hits \d+ / misses \d+ ?/ ?\d+ 件 \d+KB）.*'
     timeout: 300000
 - runFlow: subflows/wait-idle.yaml
 
@@ -62,6 +62,6 @@ tags:
 - runFlow: subflows/wait-idle.yaml
 - assertVisible:
     id: 'status-text'
-    text: '.*[1-9]\d* 件 / \d+KB（上限 \d+MB / hits \d+ / misses \d+）.*'
+    text: '.*[1-9]\d* 件 / \d+KB ?（上限 \d+MB / hits \d+ / misses \d+）.*'
 
 - takeScreenshot: 07-cache

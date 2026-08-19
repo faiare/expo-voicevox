@@ -30,7 +30,18 @@ tags:
     id: 'dict-word-0'
     text: '.*四国めたん → シコクメタン.*'
 
-# 表記だけ ASCII に差し替えて、入力経路そのものも通しておく。
+# 2 語目。登録に成功すると入力欄は空に戻るので、表記と読みの両方を入れ直す。
+# ここだけ inputText を通して、キーボードからの入力経路も確かめておく。
+# 読みは全角カタカナしか受け付けないため「例を入れる」で埋め、表記だけ
+# ASCII に差し替える（iOS のシミュレータには日本語を送り込めない）。
+- scrollUntilVisible:
+    element:
+      id: 'btn-dict-fill-sample'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-dict-fill-sample'
 - scrollUntilVisible:
     element:
       id: 'input-dict-surface'
@@ -41,7 +52,9 @@ tags:
     id: 'input-dict-surface'
 - eraseText
 - inputText: 'VOICEVOX'
-- hideKeyboard
+# hideKeyboard は iOS だと閉じ方を見つけられずに落ちることがある。ScrollView に
+# keyboardShouldPersistTaps="handled" を付けてあるので、キーボードが出たままでも
+# 次のタップは目的の要素へ届く。
 - scrollUntilVisible:
     element:
       id: 'wordtype-chip-COMMON_NOUN'
