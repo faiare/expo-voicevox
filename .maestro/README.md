@@ -164,9 +164,9 @@ CI 側の作りで踏みやすいのは 2 点。
   の既定値には入っているが、音が鳴ったかの判断は `speech-state`（`AudioTrack` が出す実際の状態遷移）に
   頼っているので、音声デバイスを殺すと `02-synthesis` の検証が空になる。
 - **APK は `-PreactNativeArchitectures=x86_64` の Release**。Debug は LogBox がタップを吸う。
-- **ホスト側の「Could not init `pa` audio driver」は無視してよい**。ランナーにサウンドデバイスが
-  無いので必ず出るが、ゲストの `AudioTrack` は仮想デバイス相手に動く。`pulseaudio` の
-  ダミーシンクを立てても消えないので入れていない。
+- **エミュレータの前に `pulseaudio` のダミーシンクを立てている**。無いと `02-synthesis` が
+  `speech-state` の `started` で落ちる。**シンクを立ててもエミュレータの
+  「Could not init `pa` audio driver」は消えない**ので、あのメッセージでは判断しないこと。
 - **`android-emulator-runner` の `script` は 1 コマンド 1 行で書く**。行末のバックスラッシュ継続は
   `@actions/exec` の引数分割を通るときに壊れ、`Flow path does not exist` で落ちる。
 
