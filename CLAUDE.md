@@ -183,6 +183,8 @@ gh workflow run e2e.yml --ref feat/xxx -f scope=smoke && gh run watch
 - **ラベルの無い PR ではジョブが skip されるので、required status check にしてはいけない**。永久に pending になる。
 - **cron は入れていない**。依存は lock と `plugin/src/core/versions.ts` でピン留め済みで、コミット無しに壊れる要素はランナーイメージの更新くらいしかない。しかも `~/.cache/expo-voicevox` が効いている限り取得経路は再検証されないので、定期実行しても「上流から消えた」は検知できない。Maestro CLI も `MAESTRO_VERSION: 2.8.0` で固定してある。
 - **エミュレータの `emulator-options` から `-noaudio` を外してある**。`reactivecircus/android-emulator-runner` の既定値には入っているが、`speak` 系の検証は `AudioTrack` が実際に出す `speech-state` を見ているので、音声デバイスを殺すと `02-synthesis` が意味を失う。スナップショット作成用の空回しのほうには付けてよい。
+- **`android-emulator-runner` の `script` で行末のバックスラッシュ継続を使ってはいけない**。このアクションは script を `@actions/exec` の引数分割に通すので、`\` がそのまま引数として渡って `Flow path does not exist: .../\` で落ちる。1 コマンド 1 行で書くこと。
+- **ランナーにサウンドデバイスが無い**ので、`-noaudio` を外しただけではエミュレータが「Could not init `pa` audio driver」で音声バックエンドの初期化に失敗する。`pulseaudio --start` + `module-null-sink` のダミーシンクを立ててから起動している。
 - **APK は `-PreactNativeArchitectures=x86_64` で 1 ABI に絞る**（既定は `arm64-v8a,x86_64`）。エミュレータは x86_64 なので、NDK のビルド時間と APK サイズがおおよそ半分になる。`assembleRelease` は JS を焼き込むので Metro は要らず、release も `signingConfigs.debug` を使うので keystore も要らない。
 - **Debug ではなく Release で回す**。Debug は LogBox がタップを吸う（`.maestro/README.md`）。
 - アセットのキャッシュは `ci.yml` の `android` ジョブと**同一のキー**。`runner.os` が同じ `Linux` なので、先に走ったほうが温めたものをそのまま拾う。AVD のスナップショットは別途 `~/.android/avd` をキャッシュしている。

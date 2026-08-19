@@ -164,6 +164,16 @@ jobs:
           disable-animations: false
           script: echo "Generated the AVD snapshot."
 
+      # ランナーにはサウンドデバイスが無く、エミュレータの音声バックエンドが
+      # 「Could not init `pa` audio driver」で初期化に失敗する。speak 系の検証は
+      # AudioTrack が出す speech-state に頼っているので、ダミーのシンクを立てておく。
+      - name: Start a dummy PulseAudio sink
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=dummy
+
       # 音が鳴ったかどうかは speech-state（ネイティブの再生器が出すイベント）で見ている。
       # このアクションの emulator-options の既定値には -noaudio が入っているので、
       # 明示的に上書きして音声デバイスを残すこと。殺すと 02-synthesis の検証が意味を失う。
@@ -177,12 +187,12 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
+          # 行末のバックスラッシュで継続してはいけない。このアクションは script を
+          # @actions/exec の引数分割に通すので、\ がそのまま引数として渡り
+          # 「Flow path does not exist: .../\」で落ちる。1 コマンド 1 行で書くこと。
           script: |
             adb install -r example/android/app/build/outputs/apk/release/app-release.apk
-            maestro test ${{ steps.scope.outputs.args }} \
-              --format junit --output maestro-report.xml \
-              --debug-output .maestro/output \
-              .maestro
+            maestro test ${{ steps.scope.outputs.args }} --format junit --output maestro-report.xml --debug-output .maestro/output .maestro
 
       # --debug-output を明示しているので、スクリーンショットとログはここに集まる
       # （既定の ~/.maestro/tests/{timestamp}/ はランナーから拾いにくい）。
