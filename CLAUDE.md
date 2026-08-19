@@ -184,12 +184,12 @@ gh workflow run e2e.yml --ref feat/xxx -f scope=smoke && gh run watch
 - **cron は入れていない**。依存は lock と `plugin/src/core/versions.ts` でピン留め済みで、コミット無しに壊れる要素はランナーイメージの更新くらいしかない。しかも `~/.cache/expo-voicevox` が効いている限り取得経路は再検証されないので、定期実行しても「上流から消えた」は検知できない。Maestro CLI も `MAESTRO_VERSION: 2.8.0` で固定してある。
 - **エミュレータの `emulator-options` から `-noaudio` を外してある**。`reactivecircus/android-emulator-runner` の既定値には入っているが、`speak` 系の検証は `AudioTrack` が実際に出す `speech-state` を見ているので、音声デバイスを殺すと `02-synthesis` が意味を失う。スナップショット作成用の空回しのほうには付けてよい。
 - **`android-emulator-runner` の `script` で行末のバックスラッシュ継続を使ってはいけない**。このアクションは script を `@actions/exec` の引数分割に通すので、`\` がそのまま引数として渡って `Flow path does not exist: .../\` で落ちる。1 コマンド 1 行で書くこと。
-- **ランナーにサウンドデバイスが無い**ので、`-noaudio` を外しただけではエミュレータが「Could not init `pa` audio driver」で音声バックエンドの初期化に失敗する。`pulseaudio --start` + `module-null-sink` のダミーシンクを立ててから起動している。
+- **ランナーにサウンドデバイスが無いので、エミュレータのホスト側は必ず「Could not init `pa` audio driver」で失敗する。これは無視してよい**。ゲスト（Android）の AudioTrack は仮想デバイス相手に動き、`speech-state` は正しく `started` → `finished` を踏む（`02-synthesis` が CI で通っている）。`pulseaudio` のダミーシンクを立てても pa の初期化失敗は消えず、60 秒無駄になるだけだったので入れていない。
 - **APK は `-PreactNativeArchitectures=x86_64` で 1 ABI に絞る**（既定は `arm64-v8a,x86_64`）。エミュレータは x86_64 なので、NDK のビルド時間と APK サイズがおおよそ半分になる。`assembleRelease` は JS を焼き込むので Metro は要らず、release も `signingConfigs.debug` を使うので keystore も要らない。
 - **Debug ではなく Release で回す**。Debug は LogBox がタップを吸う（`.maestro/README.md`）。
 - アセットのキャッシュは `ci.yml` の `android` ジョブと**同一のキー**。`runner.os` が同じ `Linux` なので、先に走ったほうが温めたものをそのまま拾う。AVD のスナップショットは別途 `~/.android/avd` をキャッシュしている。
 - 失敗すると `.maestro/output`（`--debug-output`）と `maestro-report.xml` が artifact に上がる。既定の `~/.maestro/tests/{timestamp}/` はランナーから拾いにくいので明示している。
-- 所要時間の目安は PR（smoke・キャッシュ命中）で 15 分前後、main への push（full・cold）で 45 分前後。
+- 所要時間の実測（smoke）は Android ジョブが 12 分、うち `:app:assembleRelease` が 5 分、AVD スナップショットの作成が 1 分 40 秒（2 回目以降はキャッシュで飛ぶ）、Maestro の 3 本が 2 分 27 秒。**RN 0.86 はプリビルド済みの Android アーティファクトを配るので NDK のフルコンパイルは走らない**。
 
 #### Expo のメジャー追随（`expo-major-watch.yml`）
 

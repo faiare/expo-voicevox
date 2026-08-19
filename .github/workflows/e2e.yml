@@ -164,19 +164,14 @@ jobs:
           disable-animations: false
           script: echo "Generated the AVD snapshot."
 
-      # ランナーにはサウンドデバイスが無く、エミュレータの音声バックエンドが
-      # 「Could not init `pa` audio driver」で初期化に失敗する。speak 系の検証は
-      # AudioTrack が出す speech-state に頼っているので、ダミーのシンクを立てておく。
-      - name: Start a dummy PulseAudio sink
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq pulseaudio
-          pulseaudio --start --exit-idle-time=-1
-          pactl load-module module-null-sink sink_name=dummy
-
       # 音が鳴ったかどうかは speech-state（ネイティブの再生器が出すイベント）で見ている。
       # このアクションの emulator-options の既定値には -noaudio が入っているので、
-      # 明示的に上書きして音声デバイスを残すこと。殺すと 02-synthesis の検証が意味を失う。
+      # 明示的に上書きして音声デバイスを残すこと。
+      #
+      # ランナーにサウンドデバイスが無いので、ホスト側は「Could not init `pa` audio driver」
+      # で必ず失敗する。これは無視してよい。ゲスト（Android）の AudioTrack は仮想デバイス
+      # 相手に動くので speech-state は正しく started -> finished を踏む（02-synthesis で確認済み）。
+      # pulseaudio のダミーシンクを立てても pa の初期化失敗は消えず、60 秒無駄になるだけだった。
       - name: Run the Maestro flows
         uses: reactivecircus/android-emulator-runner@v2
         with:
