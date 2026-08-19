@@ -6,6 +6,17 @@ tags:
 ---
 - runFlow: subflows/initialize.yaml
 
+# 破棄する前にスタイルのチップが出ていることを確かめておく。これを見ずに
+# 「消えた」を assert しても、単に画面の外にあるだけで通ってしまう。
+- scrollUntilVisible:
+    element:
+      id: 'style-chip-3'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'style-chip-3'
+
 - scrollUntilVisible:
     element:
       id: 'btn-finalize'
@@ -26,7 +37,8 @@ tags:
     id: 'btn-finalize'
     enabled: false
 
-# characters を空にしたのでスタイルのチップも消える。
+# characters を空にしたのでスタイルのチップも消える。破棄の直前に見えていた
+# 位置のままなので、消えたことがそのまま分かる。
 - assertNotVisible:
     id: 'style-chip-3'
 

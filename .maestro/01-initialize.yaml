@@ -34,15 +34,25 @@ tags:
       text: '.*初期化が完了しました.*'
     timeout: 300000
 
+# 上部の固定バーはスクロール位置に関係なく読める。
 - assertVisible:
     id: 'status-initialized'
     text: '初期化: はい'
 - assertVisible:
-    id: 'lib-initialized'
-    text: 'はい'
-- assertVisible:
     id: 'btn-finalize'
     enabled: true
+
+# セクション 1 の表示も追随している。初期化でスタイルの一覧が増えて画面が伸びる
+# ので、上まで戻ってから見る。
+- scrollUntilVisible:
+    element:
+      id: 'lib-initialized'
+    direction: UP
+    centerElement: true
+    speed: 30
+- assertVisible:
+    id: 'lib-initialized'
+    text: 'はい'
 
 # getCharacters() が返したスタイルがチップになっている。app.json の voices は
 # zundamon/normal だけだが、同じ 0.vvm に入っている他のスタイルも一緒に読める。
