@@ -1,0 +1,26 @@
+# アプリを起動し、操作できる状態になるまで待つ。
+#
+# clearState は付けない。Android では端末へ展開済みのモデル・辞書まで消えて、
+# 次の初期化で 130MB の展開をやり直すことになるため。
+appId: expo.modules.voicevox.example
+---
+- launchApp
+
+# iOS のコールドブート対策。最初の描画が終わる前にアクセシビリティツリーへ
+# 触ると XCTest ドライバが kAXErrorInvalidUIElement で落ちることがある。
+- swipe:
+    direction: DOWN
+    duration: 100
+
+# getVersion() が通ったこと（= ネイティブライブラリのリンクとロードに成功した
+# こと）をレディネスの判定にする。「（未取得）」のままなら、そこで落ちている。
+# Debug ビルドは Metro からバンドルを取るぶん起動が遅いので長めに待つ。
+- extendedWaitUntil:
+    visible:
+      id: 'lib-version'
+      text: '.*\d+\.\d+\.\d+.*'
+    timeout: 120000
+
+- assertVisible:
+    id: 'status-busy'
+    text: 'IDLE'

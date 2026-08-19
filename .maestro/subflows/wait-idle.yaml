@@ -1,0 +1,11 @@
+# 実行中の処理が終わるのを待ち、エラーが出ていないことを確かめる。
+appId: expo.modules.voicevox.example
+---
+- extendedWaitUntil:
+    visible:
+      id: 'status-busy'
+      text: 'IDLE'
+    timeout: 60000
+
+- assertNotVisible:
+    id: 'status-error'

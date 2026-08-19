@@ -1,0 +1,113 @@
+# ユーザー辞書。
+#
+# setUserDictWords() は全置換なので、画面のリストがそのまま辞書の中身になる。
+# initialize() の前でも呼べることも確かめる。
+#
+# iOS のシミュレータには日本語を送り込めないので、日本語の語は「例を入れる」
+# ボタンから入れる。inputText 自体は ASCII の語で 1 回だけ通しておく。
+appId: expo.modules.voicevox.example
+name: 05-user-dict
+tags:
+  - feature
+---
+- runFlow: subflows/launch.yaml
+
+- scrollUntilVisible:
+    element:
+      id: 'btn-dict-fill-sample'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-dict-fill-sample'
+- tapOn:
+    id: 'btn-dict-add'
+- runFlow: subflows/wait-idle.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*ユーザー辞書を更新しました（1 語）.*'
+- assertVisible:
+    id: 'dict-word-0'
+    text: '.*四国めたん → シコクメタン.*'
+
+# 表記だけ ASCII に差し替えて、入力経路そのものも通しておく。
+- scrollUntilVisible:
+    element:
+      id: 'input-dict-surface'
+    direction: UP
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'input-dict-surface'
+- eraseText
+- inputText: 'VOICEVOX'
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: 'wordtype-chip-COMMON_NOUN'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'wordtype-chip-COMMON_NOUN'
+- tapOn:
+    id: 'dict-priority-plus'
+- scrollUntilVisible:
+    element:
+      id: 'btn-dict-add'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-dict-add'
+- runFlow: subflows/wait-idle.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*ユーザー辞書を更新しました（2 語）.*'
+- assertVisible:
+    id: 'dict-word-1'
+    text: '.*VOICEVOX → シコクメタン（COMMON_NOUN.*優先度 6）.*'
+
+# 辞書を入れた状態で初期化して合成できる。
+- scrollUntilVisible:
+    element:
+      id: 'btn-initialize'
+    direction: UP
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-initialize'
+- extendedWaitUntil:
+    visible:
+      id: 'status-text'
+      text: '.*初期化が完了しました.*'
+    timeout: 300000
+- scrollUntilVisible:
+    element:
+      id: 'btn-synthesize-play'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-synthesize-play'
+- runFlow: subflows/wait-idle-long.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*合成しました: /.*\.wav.*'
+
+# 全置換なので、消すたびに残りを丸ごと渡し直している。
+- scrollUntilVisible:
+    element:
+      id: 'btn-dict-remove-0'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-dict-remove-0'
+- runFlow: subflows/wait-idle.yaml
+- tapOn:
+    id: 'btn-dict-remove-0'
+- runFlow: subflows/wait-idle.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*ユーザー辞書を更新しました（0 語）.*'

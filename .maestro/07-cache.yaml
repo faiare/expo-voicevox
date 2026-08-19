@@ -1,0 +1,67 @@
+# 合成キャッシュ。
+#
+# キャッシュが効いているかは所要時間でしか分からないので、同じ入力を 2 回続けて
+# 測り、2 回目が速いことを数値として確かめる。音は聞けなくても、これは確定できる。
+appId: expo.modules.voicevox.example
+name: 07-cache
+tags:
+  - feature
+  - slow
+---
+- runFlow: subflows/initialize.yaml
+
+- scrollUntilVisible:
+    element:
+      id: 'section-cache'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+
+- tapOn:
+    id: 'btn-cache-clear'
+- runFlow: subflows/wait-idle.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*キャッシュを捨てました.*'
+
+- tapOn:
+    id: 'btn-cache-stats'
+- runFlow: subflows/wait-idle.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*0 件 / 0KB（上限 \d+MB / hits \d+ / misses \d+）.*'
+
+# 同じ入力で 2 回合成する。
+- tapOn:
+    id: 'btn-cache-measure'
+- extendedWaitUntil:
+    visible:
+      id: 'status-text'
+      text: '.*1 回目 \d+ms / 2 回目 \d+ms（hits \d+ / misses \d+ / \d+ 件 \d+KB）.*'
+    timeout: 300000
+- runFlow: subflows/wait-idle.yaml
+
+# 2 回目が 1 回目より速いことを実際の数値で確かめる。
+- copyTextFrom:
+    id: 'status-text'
+- runScript: scripts/parse-cache-timing.js
+- assertTrue: ${output.cacheFaster}
+
+# 先に温めておくと、鳴らす時点では合成をやり直さない。
+- tapOn:
+    id: 'btn-cache-precache'
+- extendedWaitUntil:
+    visible:
+      id: 'status-text'
+      text: '.*precacheSpeech \d+ms → speak \d+ms（started: true）.*'
+    timeout: 300000
+- runFlow: subflows/wait-idle-long.yaml
+
+- tapOn:
+    id: 'btn-cache-stats'
+- runFlow: subflows/wait-idle.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*[1-9]\d* 件 / \d+KB（上限 \d+MB / hits \d+ / misses \d+）.*'
+
+- takeScreenshot: 07-cache

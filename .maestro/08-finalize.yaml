@@ -1,0 +1,43 @@
+# finalize() で Synthesizer を捨てる。ユーザー辞書は次の initialize() のために残る。
+appId: expo.modules.voicevox.example
+name: 08-finalize
+tags:
+  - core
+---
+- runFlow: subflows/initialize.yaml
+
+- scrollUntilVisible:
+    element:
+      id: 'btn-finalize'
+    direction: UP
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-finalize'
+- runFlow: subflows/wait-idle.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*Synthesizer を破棄しました（辞書は残っています）.*'
+
+- assertVisible:
+    id: 'status-initialized'
+    text: '初期化: いいえ'
+- assertVisible:
+    id: 'btn-finalize'
+    enabled: false
+
+# characters を空にしたのでスタイルのチップも消える。
+- assertNotVisible:
+    id: 'style-chip-3'
+
+# 破棄したあともう一度初期化できる。
+- tapOn:
+    id: 'btn-initialize'
+- extendedWaitUntil:
+    visible:
+      id: 'status-text'
+      text: '.*初期化が完了しました.*'
+    timeout: 300000
+- assertVisible:
+    id: 'status-initialized'
+    text: '初期化: はい'

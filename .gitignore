@@ -60,3 +60,8 @@ yarn-error.log
 /ios/Frameworks/
 /android/libs/
 /android/src/main/jniLibs/
+
+# Maestro（--debug-output をリポジトリ内へ向けたときの置き場）
+# 上の build/ はアンカーが無いのでどの階層にも効く。.maestro/build/ という名前に
+# すると黙って無視されるので使わないこと。
+/.maestro/output/

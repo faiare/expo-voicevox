@@ -1,0 +1,97 @@
+# 合成と再生。
+#
+# Maestro は音を聞けないので、鳴ったことは 3 つの手掛かりで確かめる。
+#   1. speech-state … ネイティブの再生器が出すイベント（started / finished /
+#      stopped / failed）。実際に再生が始まって正常に終わったことの直接の証拠。
+#   2. status-text … 合成結果のパスや再生時間（durationMillis）。
+#   3. status-error が出ていないこと。
+appId: expo.modules.voicevox.example
+name: 02-synthesis
+tags:
+  - smoke
+  - core
+---
+- runFlow: subflows/initialize.yaml
+
+# --- synthesis(): WAV をキャッシュへ書き、そのパスを expo-audio に渡す ---
+- scrollUntilVisible:
+    element:
+      id: 'btn-synthesize-play'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+- tapOn:
+    id: 'btn-synthesize-play'
+- runFlow: subflows/wait-idle-long.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*合成しました: /.*\.wav.*'
+
+# --- 書き出し先を document へ切り替えても書ける ---
+- tapOn:
+    id: 'dir-chip-document'
+- tapOn:
+    id: 'btn-synthesize-play'
+- runFlow: subflows/wait-idle-long.yaml
+- assertVisible:
+    id: 'status-text'
+    text: '.*合成しました: /.*\.wav.*'
+- tapOn:
+    id: 'dir-chip-cache'
+
+# --- speak(): ファイルを作らず、メモリ上の WAV をネイティブでそのまま鳴らす ---
+- tapOn:
+    id: 'btn-speak'
+- extendedWaitUntil:
+    visible:
+      id: 'status-text'
+      text: '.*再生中 #\d+（\d+ms）.*'
+    timeout: 180000
+- assertVisible:
+    id: 'speech-state'
+    text: '.*#\d+ started.*'
+# 鳴り終わりは busy の外で待っているので、UI は操作できる状態のまま遷移する。
+- extendedWaitUntil:
+    visible:
+      id: 'speech-state'
+      text: '.*#\d+ finished.*'
+    timeout: 60000
+- assertNotVisible:
+    id: 'status-error'
+
+# --- stopSpeaking(): 鳴っている最中に止める ---
+- tapOn:
+    id: 'btn-speak'
+- extendedWaitUntil:
+    visible:
+      id: 'speech-state'
+      text: '.*#\d+ started.*'
+    timeout: 180000
+- tapOn:
+    id: 'btn-stop-speaking'
+# 停止は status-text ではなく speech-state で見る。stopSpeaking() が書く
+# 「停止しました」と waitForSpeech() が書く「#N stopped」は競合するので、
+# status の最終値がどちらになるか決まらない。speech-state はイベントリスナしか
+# 書かないので決定的。
+- extendedWaitUntil:
+    visible:
+      id: 'speech-state'
+      text: '.*#\d+ stopped.*'
+    timeout: 15000
+
+# --- AudioQuery を組み立てずに話速と頭出しを変える経路 ---
+- runFlow: subflows/wait-idle-long.yaml
+- tapOn:
+    id: 'btn-speak-faster'
+- extendedWaitUntil:
+    visible:
+      id: 'status-text'
+      text: '.*speedScale 1\.1 / prePhonemeLength 0（合成 \d+ms / 再生 \d+ms）.*'
+    timeout: 180000
+
+# 一連の再生で failed が出ていないこと。
+- assertNotVisible:
+    id: 'speech-state'
+    text: '.*failed.*'
+
+- takeScreenshot: 02-synthesis
