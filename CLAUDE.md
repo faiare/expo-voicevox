@@ -141,6 +141,7 @@ Metro を起動し直してからアプリを再起動する**のが確実。app
   ごと消える。example は `react-native-safe-area-context` を使っている。
 - Android の `initialize()` は暗黙に `prepareAssets()` を呼ぶ。初回は 130MB の展開を含むので、
   初期化と合成の待ちは 300 秒にしてある。`00-assets` を先頭に固定してこのコストを 1 本目で払う。
+- **`scrollUntilVisible` の行き先はボタンの testID にする**。素の `View` は Android の view flattening で畳まれ、画面に映っていてもツリーに現れない（`07-cache` が `section-cache` を指していて CI の Release で `Element not found` になった）。`example/App.tsx` の `Group` には `collapsable={false}` を付けてある。
 - **`clearState` は既定のフローでは使わない**。Android では展開済みのモデルと辞書ごと消える。
   中断の検証（`90-prepare-cancel`）だけは避けられないので `manual` タグで既定から外してある。
 - `.mcp.json` に Maestro の MCP サーバを登録してあるので、フローを書いて即実行し、

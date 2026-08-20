@@ -10,9 +10,11 @@ tags:
 ---
 - runFlow: subflows/initialize.yaml
 
+# 他のフローと同じくボタンを指す。セクションの View（section-*）は素の View なので
+# Android の view flattening で畳まれ、画面に映っていてもツリーに現れないことがある。
 - scrollUntilVisible:
     element:
-      id: 'section-cache'
+      id: 'btn-cache-clear'
     direction: DOWN
     centerElement: true
     speed: 30
