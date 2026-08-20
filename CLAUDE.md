@@ -166,7 +166,7 @@ CI 特有の前提が 3 つある。
 
 #### Maestro の E2E（`e2e.yml`）
 
-`.github/workflows/e2e.yml` が Maestro のフローを回す。**`ci.yml` とは別ファイル**（トリガもランナー要件も違い、`concurrency` を共有すると E2E のキャンセルが lint まで巻き込む）。**現状は Android（ubuntu-latest）のみで、iOS は入っていない**。
+`.github/workflows/e2e.yml` が Maestro のフローを回す。**`ci.yml` とは別ファイル**（トリガもランナー要件も違い、`concurrency` を共有すると E2E のキャンセルが lint まで巻き込む）。**Android（ubuntu-latest のエミュレータ）と iOS（macos-26 のシミュレータ）の 2 ジョブ**が並列で走る。どちらのランナーも public リポジトリなら無料・無制限。
 
 | トリガ | 範囲 |
 |---|---|
@@ -174,7 +174,7 @@ CI 特有の前提が 3 つある。
 | main への push | manual 以外の全フロー |
 | `workflow_dispatch` | 入力 `scope` で smoke / full を選ぶ |
 
-`check-syntax` だけの `lint` ジョブは端末が要らないので、ラベルに関係なく全 PR で回る。
+`check-syntax` だけの `lint` ジョブは端末が要らないので、ラベルに関係なく全 PR で回る。範囲の決定は `scope` ジョブ 1 つに集約してあり、`e2e` ラベルの判定もそこが持つ（**このジョブが skip されると `needs` で繋がった android / ios も一緒に skip される**ので、挙動はジョブごとに `if:` を書いていた頃と変わらない）。
 
 ネイティブを触ったときは手元から任意のブランチに投げるのが主経路。
 
@@ -197,6 +197,21 @@ gh workflow run e2e.yml --ref feat/xxx -f scope=smoke && gh run watch
 - アセットのキャッシュは `ci.yml` の `android` ジョブと**同一のキー**。`runner.os` が同じ `Linux` なので、先に走ったほうが温めたものをそのまま拾う。AVD のスナップショットは別途 `~/.android/avd` をキャッシュしている。
 - 失敗すると `.maestro/output` と `maestro-report.xml` が artifact に上がる。既定の `~/.maestro/tests/{timestamp}/` はランナーから拾いにくいので `--debug-output` で明示し、**`--flatten-debug-output` も付けている**（付けないと `.maestro/output` にファイルが残らず、artifact が `maestro-report.xml` 1 本だけになる）。
 - 所要時間の実測（smoke）は Android ジョブが 12 分、うち `:app:assembleRelease` が 5 分、AVD スナップショットの作成が 1 分 40 秒（2 回目以降はキャッシュで飛ぶ）、Maestro の 3 本が 2 分 27 秒。**RN 0.86 はプリビルド済みの Android アーティファクトを配るので NDK のフルコンパイルは走らない**。
+- **Android のエミュレータを arm64 にはできない**（「実機に近い」を理由に変えようとしないこと）。GitHub ホストの Linux arm64 ランナー（`ubuntu-24.04-arm` など）には `/dev/kvm` が公開されておらず、macOS ランナーは VM の中なのでネスト仮想化が効かず HVF が `HV_UNSUPPORTED` で落ちる（android-emulator-runner の #350 / #380）。arm64 の検証は iOS ジョブ（macOS ランナーは Apple Silicon）が担う。
+
+##### iOS ジョブの勘所
+
+- **シミュレータは仮想化を使わない**ので、上の arm64 の制約に当たらない。macOS ランナーは M1 / 3 vCPU / 7GB。
+- **`macos-15` では組めない**。既定の Xcode が Swift 6.1 で、`ExpoModulesJSI` の xcframework を組む SwiftPM が `package 'apple' is using Swift tools version 6.2.0 but the installed version is 6.1.0` で止まる。`macos-26`（既定 Xcode 26.6）を使うこと。**ビルドの終盤まで分からない失敗**なので、最初に `xcodebuild -version` を出しておく。
+- **`npx expo prebuild --platform ios --no-install` は CocoaPods も飛ばす**ので `pod install` を自分で呼ぶ。example に Gemfile は無いので `bundle exec` は要らない。
+- **Release でビルドする**（`xcodebuild -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO`）。Release のビルドフェーズが JS バンドルを `.app` に埋めるので Metro が要らず、Debug の LogBox がタップを吸う問題も避けられる。
+- **端末名を固定しない**。`xcrun simctl list devices available --json` から新しいランタイムの iPhone を 1 台選ぶ（`iPhone 17 Pro` のような決め打ちはランナーイメージの Xcode が上がった時点で落ちる）。
+- **ホストに音声出力デバイスが要る**。シミュレータの再生はホスト macOS の CoreAudio に出るので、デバイスが 1 つも無いと `AVAudioPlayer.play()` が false を返し、`ios/VoicevoxPlayer.swift` が「could not start the audio player」を投げて `02-synthesis` が落ちる（Android の `module-null-sink` と同じ役目）。ランナーイメージの Null Audio Device は起動時の初期化に 3 割ほど失敗するので（actions/runner-images#13668）、無ければ `sudo killall coreaudiod` で拾い直している。**`brew install --cask blackhole-2ch` では直らない**（反映に再起動が要る。runner-images#11746）。
+- **アセットは実行時に展開しない**。iOS は `.app` の中のフォルダ参照をそのまま読むので、ビルド直後に `find .../*.app/voicevox -maxdepth 1` で構造ごと入ったことを確かめてから先へ進む。
+- **シミュレータはビルドより先に起動する**。ランナーでの初回 boot は `simctl bootstatus` だけで 4 分近くかかる（手元の Mac では 4 秒）。prebuild とビルドの数分をそのまま暖機に充てられるので、`npm ci` より前に置くこと。
+- **`MAESTRO_DRIVER_STARTUP_TIMEOUT` を伸ばす**。XCUITest ドライバがポートを開けるまでの待ちで、既定の 120 秒は 3 vCPU のランナーでは足りない。足りないと **1 本もフローが走らないまま**「iOS driver not ready in time」で終わる（手元の Mac では 4 秒で開くので、ローカルでは絶対に踏まない）。600 秒にしてある。
+- **画面に収まる行数が Android と違う**。`03-params` の「開始の無音」は話速の 4 行下にあり、iPhone では話速と同時に映らない。**Android で通っているフローが iOS でだけ `assertVisible` に落ちる**ことがあるので、`assertVisible` の前に `scrollUntilVisible` で運ぶ規則は iOS でより厳しく効く。
+- 所要時間の実測（full / 9 フロー）は iOS ジョブが 24 分。内訳は Maestro の 9 本が 10.7 分、`simctl bootstatus` が 3.9 分、`xcodebuild` が 3.3 分、`pod install` が 2.8 分。**`bootstatus` はステップとして直列に 4 分待つ**（`boot` 自体は即座に返る）ので、詰めたいならここを後ろのステップへ分けて待つ形にする余地がある。
 
 #### Expo のメジャー追随（`expo-major-watch.yml`）
 

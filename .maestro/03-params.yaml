@@ -110,6 +110,15 @@ tags:
 - assertVisible:
     id: 'param-speed-value'
     text: '1.00'
+# 開始の無音は話速の 4 行下（音高・抑揚・音量を挟む）にあり、iPhone では話速と同時には
+# 画面へ収まらない。Android では収まるので、ここは iOS でだけ落ちる。
+- scrollUntilVisible:
+    element:
+      id: 'param-pre-value'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+    timeout: 120000
 - assertVisible:
     id: 'param-pre-value'
     text: '0.10'
