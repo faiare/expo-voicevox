@@ -163,7 +163,7 @@ Android の `initialize()` は暗黙に `prepareAssets()` を呼ぶので、初�
 
 ## CI で回す
 
-`.github/workflows/e2e.yml` が **Android（ubuntu-latest のエミュレータ）と iOS（macos-15 の
+`.github/workflows/e2e.yml` が **Android（ubuntu-latest のエミュレータ）と iOS（macos-26 の
 シミュレータ）**を並列で回す。どちらのランナーも public リポジトリなら無料・無制限で使える。
 範囲の決定は `scope` ジョブ 1 つに集約してあり、`e2e` ラベルによる出し分けもここが持つ
 （skip されれば端末ジョブも一緒に skip される）。
@@ -195,7 +195,9 @@ CI 側の作りで踏みやすいのは 2 点。
 - **APK は `-PreactNativeArchitectures=x86_64` の Release**。Debug は LogBox がタップを吸う。
   **Android のエミュレータを arm64 にはできない**。Linux arm64 ランナーには `/dev/kvm` が無く、
   macOS ランナーは VM の中なのでネスト仮想化が効かず HVF が `HV_UNSUPPORTED` で落ちる。
-  arm64 の検証は iOS（macos-15 = Apple Silicon）が担う。
+  arm64 の検証は iOS（macOS ランナー = Apple Silicon）が担う。
+- **iOS のランナーは `macos-26`**。`macos-15` は既定の Xcode が Swift 6.1 で、`ExpoModulesJSI` の
+  xcframework を組む SwiftPM が Swift 6.2 を要求して止まる。
 - **iOS も Release**（`xcodebuild -configuration Release -sdk iphonesimulator`）。Release の
   ビルドフェーズが JS バンドルを `.app` に埋めるので Metro が要らない。端末は
   `xcrun simctl list devices available --json` から**新しいランタイムの iPhone を 1 台選ぶ**

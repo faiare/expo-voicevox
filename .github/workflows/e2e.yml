@@ -92,7 +92,7 @@ jobs:
     # Android のエミュレータは x86_64 のまま。arm64 にはできない
     # （Linux arm64 ランナーには /dev/kvm が無く、macOS ランナーは VM の中なので
     # ネスト仮想化が使えず HVF が HV_UNSUPPORTED で落ちる）。実機に近い arm64 の
-    # 検証は ios ジョブ（macos-15 = Apple Silicon）が担う。
+    # 検証は ios ジョブ（macOS ランナーは Apple Silicon）が担う。
     runs-on: ubuntu-latest
     needs: scope
     timeout-minutes: 90
@@ -248,10 +248,14 @@ jobs:
 
   ios:
     name: Maestro (iOS)
-    # macos-15 は Apple Silicon（arm64）で、public リポジトリなら無料・無制限で使える。
+    # macOS ランナーは Apple Silicon（arm64）で、public リポジトリなら無料・無制限で使える。
     # シミュレータは仮想化を使わないので、Android エミュレータを arm64 で回せない理由
     # （macOS ランナーは VM の中で HVF が HV_UNSUPPORTED になる）には当たらない。
-    runs-on: macos-15
+    #
+    # macos-15 は使えない。既定の Xcode が Swift 6.1 で、ExpoModulesJSI の
+    # xcframework を組む SwiftPM が「package 'apple' is using Swift tools version
+    # 6.2.0 but the installed version is 6.1.0」で止まる。macos-26 は既定が Xcode 26.6。
+    runs-on: macos-26
     needs: scope
     timeout-minutes: 120
     steps:
@@ -287,6 +291,12 @@ jobs:
       - name: Install example dependencies
         run: npm ci
         working-directory: example
+
+      # Swift のバージョン不足はビルドの終盤まで分からないので、最初に控えておく。
+      - name: Show the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
 
       - name: Prebuild the example app (iOS)
         run: npx expo prebuild --platform ios --no-install
