@@ -93,6 +93,14 @@ tags:
     speed: 30
 - tapOn:
     id: 'btn-params-reset'
+# btn-params-reset まで下げた位置だと話速の行は画面の上に隠れている。
+# assertVisible は画面に映っていることを要求するので、戻してから見る。
+- scrollUntilVisible:
+    element:
+      id: 'param-speed-value'
+    direction: UP
+    centerElement: true
+    speed: 30
 - assertVisible:
     id: 'param-speed-value'
     text: '1.00'

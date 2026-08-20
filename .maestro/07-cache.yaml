@@ -10,13 +10,13 @@ tags:
 ---
 - runFlow: subflows/initialize.yaml
 
-# 他のフローと同じくボタンを指す。セクションの View（section-*）は素の View なので
-# Android の view flattening で畳まれ、画面に映っていてもツリーに現れないことがある。
+# ここは画面の最下部なので centerElement を付けない。付けると「見えているのに
+# 中央へ寄せられない」状態でリトライし続け、20 秒のタイムアウトで
+# 「No visible element found」になる。
 - scrollUntilVisible:
     element:
       id: 'btn-cache-clear'
     direction: DOWN
-    centerElement: true
     speed: 30
 
 - tapOn:

@@ -959,7 +959,7 @@ function describeError(error: unknown): string {
 
 function Group(props: { testID?: string; name: string; children: React.ReactNode }) {
   return (
-    <View testID={props.testID} collapsable={false} style={styles.group}>
+    <View testID={props.testID} style={styles.group}>
       <Text style={styles.groupHeader}>{props.name}</Text>
       {props.children}
     </View>

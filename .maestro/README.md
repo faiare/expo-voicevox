@@ -69,15 +69,20 @@ Maestro は音を聞けない。代わりに次の 3 つを見る。上ほど強
 アクセシビリティ識別子、Android では `resource-id` になるので、同じ書き方が
 両方で通る。
 
-### スクロール先はボタンを指す
+### 画面の最下部に `centerElement` を使わない
 
-素の `View` は Android の view flattening でネイティブビューごと畳まれ、**画面に映っていても
-アクセシビリティツリーに testID が現れない**。`07-cache` が `section-cache` を指していて、
-CI の Release ビルドで `Element not found` になった（スクロール自体は最下部まで届いていた）。
+`scrollUntilVisible` の `centerElement: true` は、要素が見えたあと**さらに画面中央へ寄せる**。
+ページの最下部にある要素はこれ以上スクロールできないので中央まで運べず、
+`Visibility Percent: 1.0`（＝見えている）のままリトライを繰り返し、20 秒のタイムアウトで
+`No visible element found` になる。**画面に映っているのに見つからない**という読めない落ち方をする。
 
-`Pressable` 由来のボタンは必ずツリーに出るので、`scrollUntilVisible` はボタンの id を指すこと。
-`Group` には `collapsable={false}` を付けてあるので `section-*` も使えるが、目印としては
-ボタンのほうが確実。
+`07-cache` の `btn-cache-clear` がこれで落ちた。最下部を指すときは `centerElement` を外す。
+
+### `assertVisible` の前にその要素まで戻す
+
+`assertVisible` は画面に映っていることを要求する。`03-params` は `btn-params-reset` まで
+スクロールしてからタップし、そのまま話速の値を assert していたので、話速の行が画面の上に
+隠れて落ちた。**離れた位置の値を見るときは `scrollUntilVisible` で戻してから見ること。**
 
 ### テキストの一致は正規表現で、部分一致には `.*` を付ける
 
@@ -205,7 +210,7 @@ Debug ビルドで回していて「testID を足したのに見つからない�
 | testID | 要素 |
 |---|---|
 | `status-bar` / `status-busy` / `status-initialized` / `status-text` / `status-error` | 画面上部の固定バー。`status-busy` は `BUSY` / `IDLE` |
-| `section-lib` … `section-cache` | 各セクション（スクロールの目印）。`Group` に `collapsable={false}` が要る |
+| `section-lib` … `section-cache` | 各セクション（スクロールの目印） |
 | `lib-version` / `lib-initialized` | 1. ライブラリ の値 |
 | `btn-asset-status` / `btn-prepare-assets` / `btn-cancel-prepare` / `btn-initialize` / `btn-finalize` | 2. 初期化 |
 | `style-chip-{styleId}` | スタイルの選択（初期化後に並ぶ） |
