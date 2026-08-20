@@ -69,6 +69,33 @@ Maestro は音を聞けない。代わりに次の 3 つを見る。上ほど強
 アクセシビリティ識別子、Android では `resource-id` になるので、同じ書き方が
 両方で通る。
 
+### 遠くまでスクロールするなら `timeout` を伸ばす
+
+`scrollUntilVisible` の既定のタイムアウトは **20 秒**。`speed: 30` のスワイプは CI の
+エミュレータで 1 回 2.6 秒ほどかかり、8 セクションあるこの画面の最下部までは 8 回前後
+必要になる。つまり既定では**到達した直後にタイムアウトする**。
+
+厄介なのは、そのときのエラーが `No visible element found` で、失敗時のスクリーンショットには
+目的の要素がしっかり映っていること（最後のスワイプで到達し、次の確認の前に時間切れになる）。
+「映っているのに見つからない」ときは、まずタイムアウトを疑う。
+
+最下部を指すときは `centerElement` も外す。これ以上スクロールできないので中央へ寄せられず、
+寄せようとして残り時間を食い潰す。
+
+既定のフローは **すべての `scrollUntilVisible` に `timeout: 120000` を明示**してある。伸ばしても
+要素が早く見つかればその時点で進むので、待ち時間が増えるわけではない。
+
+### `assertVisible` の前にその要素まで戻す
+
+`assertVisible` は画面に映っていることを要求する。`03-params` は `btn-params-reset` まで
+スクロールしてからタップし、そのまま話速の値を assert していたので、話速の行が画面の上に
+隠れて落ちた。**離れた位置の値を見るときは `scrollUntilVisible` で戻してから見ること。**
+
+上部のステータスバーは**本文の行数で高さが変わる**（WAV のパスは 3 行、「再生中 #1（7232ms）」は
+1 行）ので、下端ぎりぎりの要素は入ったり入らなかったりする。`02-synthesis` の `speech-state` が
+これで落ちた。**一連の assert が終わるまで見続ける要素は、先に画面の中央へ寄せておく**
+（`btn-stop-speaking` を中央にすると `btn-speak` が上、`speech-state` が直下に収まる）。
+
 ### テキストの一致は正規表現で、部分一致には `.*` を付ける
 
 Maestro のテキスト照合は完全一致の正規表現。`合成しました` のように前後に
@@ -164,6 +191,11 @@ CI 側の作りで踏みやすいのは 2 点。
   の既定値には入っているが、音が鳴ったかの判断は `speech-state`（`AudioTrack` が出す実際の状態遷移）に
   頼っているので、音声デバイスを殺すと `02-synthesis` の検証が空になる。
 - **APK は `-PreactNativeArchitectures=x86_64` の Release**。Debug は LogBox がタップを吸う。
+- **エミュレータの RAM は 6GB**。既定の 2GB では 130MB の展開とモデルの読み込みでシステムが
+  圧迫され、「Pixel Launcher isn`t responding」が最前面に出る。アプリは正常でも全フローが
+  launch の待ちで落ちるので、スクリーンショットを見ないと原因が分からない。
+- **CI は `--config .maestro/config.ci.yaml` で fail-fast**。1 本目が落ちたら止める。ローカルは
+  `config.yaml`（`continueOnFailure: true`）のままで、全部の結果が出る。
 - **`adb install` の直後は待つ**。200MB の APK の dexopt でエミュレータが忙しく、adb が
   `device offline` で一瞬落ちて `launchApp` が `DeviceServerDiedException` になる。
 - **エミュレータの前に `pulseaudio` のダミーシンクを立てている**。無いと `02-synthesis` が

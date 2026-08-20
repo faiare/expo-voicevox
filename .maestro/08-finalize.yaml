@@ -14,6 +14,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - assertVisible:
     id: 'style-chip-3'
 
@@ -23,6 +24,7 @@ tags:
     direction: UP
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-finalize'
 - runFlow: subflows/wait-idle.yaml

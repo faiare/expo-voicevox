@@ -15,6 +15,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 
 # 話速: 1.00 から 0.1 刻みで 2 回上げる。
 - assertVisible:
@@ -36,6 +37,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - assertVisible:
     id: 'param-pre-value'
     text: '0.10'
@@ -61,6 +63,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - assertVisible:
     id: 'param-upspeak-value'
     text: 'ON'
@@ -77,6 +80,7 @@ tags:
     direction: UP
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-synthesize-play'
 - runFlow: subflows/wait-idle-long.yaml
@@ -91,8 +95,18 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-params-reset'
+# btn-params-reset まで下げた位置だと話速の行は画面の上に隠れている。
+# assertVisible は画面に映っていることを要求するので、戻してから見る。
+- scrollUntilVisible:
+    element:
+      id: 'param-speed-value'
+    direction: UP
+    centerElement: true
+    speed: 30
+    timeout: 120000
 - assertVisible:
     id: 'param-speed-value'
     text: '1.00'

@@ -141,6 +141,9 @@ Metro を起動し直してからアプリを再起動する**のが確実。app
   ごと消える。example は `react-native-safe-area-context` を使っている。
 - Android の `initialize()` は暗黙に `prepareAssets()` を呼ぶ。初回は 130MB の展開を含むので、
   初期化と合成の待ちは 300 秒にしてある。`00-assets` を先頭に固定してこのコストを 1 本目で払う。
+- **遠くまでスクロールするフローは `scrollUntilVisible` の `timeout` を伸ばす**。既定は 20 秒だが、`speed: 30` のスワイプは CI のエミュレータで 1 回 2.6 秒かかり、8 セクションある画面の最下部までは 8 回前後必要で間に合わない。**エラーは `No visible element found` なのに失敗時のスクリーンショットには目的の要素が映っている**（最後のスワイプで到達し、次の確認の前に時間切れになる）ので読み違えやすい。最下部を指すときは `centerElement` も外す（寄せられずに残り時間を使い切る）。
+- **上部のステータスバーは本文の行数で高さが変わる**（WAV のパスは 3 行、「再生中 #1（7232ms）」は 1 行）ので、画面の下端ぎりぎりの要素は入ったり入らなかったりする。`02-synthesis` の `speech-state` がこれで落ちた。**一連の assert が終わるまで見続ける要素は、先に画面の中央へ寄せておくこと**（`btn-stop-speaking` を中央にすると `btn-speak` が上、`speech-state` が直下に収まる）。
+- **`assertVisible` の前にはその要素まで `scrollUntilVisible` で戻す**。`03-params` は `btn-params-reset` までスクロールした位置のまま話速を assert していて、行が画面の上に隠れて落ちた。
 - **`clearState` は既定のフローでは使わない**。Android では展開済みのモデルと辞書ごと消える。
   中断の検証（`90-prepare-cancel`）だけは避けられないので `manual` タグで既定から外してある。
 - `.mcp.json` に Maestro の MCP サーバを登録してあるので、フローを書いて即実行し、
@@ -184,6 +187,9 @@ gh workflow run e2e.yml --ref feat/xxx -f scope=smoke && gh run watch
 - **cron は入れていない**。依存は lock と `plugin/src/core/versions.ts` でピン留め済みで、コミット無しに壊れる要素はランナーイメージの更新くらいしかない。しかも `~/.cache/expo-voicevox` が効いている限り取得経路は再検証されないので、定期実行しても「上流から消えた」は検知できない。Maestro CLI も `MAESTRO_VERSION: 2.8.0` で固定してある。
 - **エミュレータの `emulator-options` から `-noaudio` を外してある**。`reactivecircus/android-emulator-runner` の既定値には入っているが、`speak` 系の検証は `AudioTrack` が実際に出す `speech-state` を見ているので、音声デバイスを殺すと `02-synthesis` が意味を失う。スナップショット作成用の空回しのほうには付けてよい。
 - **`android-emulator-runner` の `script` で行末のバックスラッシュ継続を使ってはいけない**。このアクションは script を `@actions/exec` の引数分割に通すので、`\` がそのまま引数として渡って `Flow path does not exist: .../\` で落ちる。1 コマンド 1 行で書くこと。
+- **エミュレータの RAM を 6GB にしてある**（`ram-size: 6144M`）。既定の 2GB だと、130MB の展開と ONNX モデルの読み込みでシステム全体が圧迫され、**Pixel Launcher が ANR を起こしてダイアログが最前面を占有する**。こうなるとアプリは正常なのに全フローが launch の 120 秒待ちで落ちる。**AVD スナップショットのキャッシュキーには `ram-size` と `cores` を含めること**（AVD はこれらを焼き込んで作られるので、キーを変えないと古い 2GB の AVD が使い回される）。
+- **CI は `--config .maestro/config.ci.yaml` で fail-fast にしてある**。`continueOnFailure: false` だけが `config.yaml` との違い。エミュレータが不調なときは 9 本とも同じ理由で落ちるので、全部待つと 20 分近く無駄になる。ローカルの `config.yaml` は `true` のまま（1 本落ちても残りの結果が欲しい）。
+- **`adb shell settings put global hide_error_dialogs 1` を必ず立てる**。無いと「Pixel Launcher isn`t responding」の ANR ダイアログが最前面を占有し、アプリは正常なのに Maestro が `lib-version` を見つけられず、**全フローが launch の 120 秒待ちで落ちる**（main への初回 push の full スイートで 9/9 失敗した）。スクリーンショットを見るまで「アプリが起動していない」ようにしか見えないので注意。エミュレータの `cores` も 2 → 3 に上げてある（ubuntu-latest は 4 vCPU）。
 - **`adb install` のあとに settle 待ちを入れてある**。200MB の APK を入れた直後は dexopt でエミュレータが忙しく、スナップショットから復元した adb が `device offline` で一瞬落ちる（`DeviceServerDiedException`）。実際に `00-assets` と `01-initialize` が `launchApp` の時点で踏んだ。
 - **エミュレータを起動する前に `pulseaudio` のダミーシンク（`module-null-sink`）を立てる**。無いと `02-synthesis` が `Assertion is false: .*#\d+ started.*, id: speech-state` で落ちる（JS 側は「再生中」まで進むのに、ネイティブの再生器が `started` を観測させないまま終わる）。**紛らわしいが、シンクを立ててもエミュレータの「Could not init `pa` audio driver」は消えない**。このメッセージは無視してよく、判断材料は `02-synthesis` が通るかどうかだけ（入れると通り、外すと落ちるのを CI で確認済み）。
 - **APK は `-PreactNativeArchitectures=x86_64` で 1 ABI に絞る**（既定は `arm64-v8a,x86_64`）。エミュレータは x86_64 なので、NDK のビルド時間と APK サイズがおおよそ半分になる。`assembleRelease` は JS を焼き込むので Metro は要らず、release も `signingConfigs.debug` を使うので keystore も要らない。

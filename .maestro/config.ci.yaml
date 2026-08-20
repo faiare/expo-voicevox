@@ -1,0 +1,24 @@
+# CI 用のワークスペース設定。`maestro test --config .maestro/config.ci.yaml .maestro` で使う。
+#
+# config.yaml との違いは continueOnFailure だけ。CI では 1 本目が落ちたら残りも
+# 同じ理由で落ちることがほとんどで（エミュレータが不調なときは全滅する）、
+# 9 本ぶんのタイムアウトを待つと 20 分近く無駄になる。最初の失敗で止める。
+flows:
+  - '*.yaml'
+
+excludeTags:
+  - manual
+
+executionOrder:
+  # CI では最初の 1 本が落ちた時点で止める。原因はどうせ artifact を見て調べる。
+  continueOnFailure: false
+  flowsOrder:
+    - 00-assets
+    - 01-initialize
+    - 02-synthesis
+    - 03-params
+    - 04-accent
+    - 05-user-dict
+    - 06-kana
+    - 07-cache
+    - 08-finalize
