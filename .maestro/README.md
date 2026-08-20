@@ -202,6 +202,10 @@ CI 側の作りで踏みやすいのは 2 点。
   ビルドフェーズが JS バンドルを `.app` に埋めるので Metro が要らない。端末は
   `xcrun simctl list devices available --json` から**新しいランタイムの iPhone を 1 台選ぶ**
   （端末名を固定するとランナーイメージの Xcode が上がった時点で落ちる）。
+- **iOS はシミュレータをビルドより先に起動する**。ランナーでの初回 boot は 4 分近くかかり、
+  起動直後は XCUITest ドライバが 2 分待ってもポートを開けない。ビルド中に暖めておく。
+  ドライバの待ち時間も `MAESTRO_DRIVER_STARTUP_TIMEOUT` で 600 秒にしてある（既定は 120 秒で、
+  足りないと 1 本も走らずに「iOS driver not ready in time」で終わる）。
 - **iOS の再生はホスト macOS の CoreAudio に出る**。ランナーイメージの Null Audio Device は
   起動時の初期化に 3 割ほど失敗する（actions/runner-images#13668）ので、出力デバイスが
   無ければ `coreaudiod` を再起動して拾い直している。無いままだと `AVAudioPlayer.play()` が

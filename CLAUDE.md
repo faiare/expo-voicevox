@@ -208,6 +208,8 @@ gh workflow run e2e.yml --ref feat/xxx -f scope=smoke && gh run watch
 - **端末名を固定しない**。`xcrun simctl list devices available --json` から新しいランタイムの iPhone を 1 台選ぶ（`iPhone 17 Pro` のような決め打ちはランナーイメージの Xcode が上がった時点で落ちる）。
 - **ホストに音声出力デバイスが要る**。シミュレータの再生はホスト macOS の CoreAudio に出るので、デバイスが 1 つも無いと `AVAudioPlayer.play()` が false を返し、`ios/VoicevoxPlayer.swift` が「could not start the audio player」を投げて `02-synthesis` が落ちる（Android の `module-null-sink` と同じ役目）。ランナーイメージの Null Audio Device は起動時の初期化に 3 割ほど失敗するので（actions/runner-images#13668）、無ければ `sudo killall coreaudiod` で拾い直している。**`brew install --cask blackhole-2ch` では直らない**（反映に再起動が要る。runner-images#11746）。
 - **アセットは実行時に展開しない**。iOS は `.app` の中のフォルダ参照をそのまま読むので、ビルド直後に `find .../*.app/voicevox -maxdepth 1` で構造ごと入ったことを確かめてから先へ進む。
+- **シミュレータはビルドより先に起動する**。ランナーでの初回 boot は `simctl bootstatus` だけで 4 分近くかかる（手元の Mac では 4 秒）。prebuild とビルドの数分をそのまま暖機に充てられるので、`npm ci` より前に置くこと。
+- **`MAESTRO_DRIVER_STARTUP_TIMEOUT` を伸ばす**。XCUITest ドライバがポートを開けるまでの待ちで、既定の 120 秒は 3 vCPU のランナーでは足りない。足りないと **1 本もフローが走らないまま**「iOS driver not ready in time」で終わる（手元の Mac では 4 秒で開くので、ローカルでは絶対に踏まない）。600 秒にしてある。
 
 #### Expo のメジャー追随（`expo-major-watch.yml`）
 

@@ -275,6 +275,61 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Swift のバージョン不足はビルドの終盤まで分からないので、最初に控えておく。
+      - name: Show the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # シミュレータの再生はホスト macOS の CoreAudio に出る。デバイスが 1 つも無いと
+      # AVAudioPlayer.play() が false を返して 02-synthesis が
+      # 「could not start the audio player」で落ちる（Android の module-null-sink と同じ役目）。
+      # ランナーイメージには Apple Virtual Sound Device と Null Audio Device が入っているが、
+      # 起動時の初期化に失敗することがあるので（actions/runner-images#13668）、
+      # 無ければ coreaudiod を再起動して拾い直す。BlackHole の追加インストールは
+      # 反映に再起動が要るので使えない（runner-images#11746）。
+      - name: Ensure a host audio output device
+        run: |
+          if ! system_profiler SPAudioDataType | grep -qi output; then
+            echo "no audio output device; restarting coreaudiod."
+            sudo killall coreaudiod || true
+            for _ in 1 2 3 4 5 6; do
+              sleep 5
+              system_profiler SPAudioDataType | grep -qi output && break
+            done
+          fi
+          system_profiler SPAudioDataType || true
+
+      # **ビルドより先に起動する**。ランナーでの初回 boot は bootstatus だけで 4 分近くかかり
+      # （手元の Mac では 4 秒）、起動直後は Maestro の XCUITest ドライバが 2 分待っても
+      # ポートを開けない。ここで起動しておけば、prebuild とビルドの数分がそのまま
+      # 暖機時間になる。
+      #
+      # 端末名はランナーイメージの Xcode に紐づいて変わるので固定しない。
+      # 使えるランタイムのうち新しいほうから iPhone を 1 台選ぶ。
+      - name: Boot the simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available --json \
+            | jq -r '.devices | to_entries
+                | map(select(.key | test("SimRuntime[.]iOS")))
+                | sort_by(.key) | last | .value
+                | map(select(.name | test("^iPhone"))) | last | .udid')
+          if [ -z "$udid" ] || [ "$udid" = "null" ]; then
+            echo "no iPhone simulator is available." >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          # 既に起動していると boot は「Unable to boot device in current state」で失敗する。
+          # 起動できたかどうかの判定は後段の bootstatus に任せる。
+          xcrun simctl boot "$udid" || true
+          # XCUITest は Simulator.app 越しでなくても動くが、UI を上げておくと
+          # SpringBoard まで確実に立ち上がる。--args で対象の端末を指定する。
+          open -a Simulator --args -CurrentDeviceUDID "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl list devices booted
+
       # 中身は android ジョブと同じだが runner.os が macOS なのでキーは別物。
       # iOS はモデルと辞書をフォルダ参照で .app に載せるため、prebuild より先に要る。
       - name: Cache voicevox-core artifacts
@@ -291,12 +346,6 @@ jobs:
       - name: Install example dependencies
         run: npm ci
         working-directory: example
-
-      # Swift のバージョン不足はビルドの終盤まで分からないので、最初に控えておく。
-      - name: Show the toolchain
-        run: |
-          xcodebuild -version
-          swift --version
 
       - name: Prebuild the example app (iOS)
         run: npx expo prebuild --platform ios --no-install
@@ -328,52 +377,18 @@ jobs:
       - name: Verify that the assets landed in the app bundle
         run: find example/ios/build/Build/Products/Release-iphonesimulator/*.app/voicevox -maxdepth 1
 
-      # シミュレータの再生はホスト macOS の CoreAudio に出る。ランナーイメージの
-      # Null Audio Device は起動時の初期化に失敗することが 3 割ほどあり
-      # （actions/runner-images#13668）、出力デバイスが 1 つも無いと
-      # AVAudioPlayer.play() が false を返して 02-synthesis が
-      # 「could not start the audio player」で落ちる。Android 側の module-null-sink と同じ役目。
-      #
-      # BlackHole の追加インストールは再起動しないと効かない（runner-images#11746）ので、
-      # 既にイメージへ入っているデバイスを coreaudiod の再起動で拾い直す。
-      - name: Ensure a host audio output device
-        run: |
-          if ! system_profiler SPAudioDataType | grep -qi output; then
-            echo "no audio output device; restarting coreaudiod."
-            sudo killall coreaudiod || true
-            for _ in 1 2 3 4 5 6; do
-              sleep 5
-              system_profiler SPAudioDataType | grep -qi output && break
-            done
-          fi
-          system_profiler SPAudioDataType || true
-
-      # 端末名はランナーイメージの Xcode に紐づいて変わるので固定しない。
-      # 使えるランタイムのうち新しいほうから iPhone を 1 台選ぶ。
-      - name: Boot the simulator
-        id: sim
-        run: |
-          udid=$(xcrun simctl list devices available --json \
-            | jq -r '.devices | to_entries
-                | map(select(.key | test("SimRuntime[.]iOS")))
-                | sort_by(.key) | last | .value
-                | map(select(.name | test("^iPhone"))) | last | .udid')
-          if [ -z "$udid" ] || [ "$udid" = "null" ]; then
-            echo "no iPhone simulator is available." >&2
-            xcrun simctl list devices available >&2
-            exit 1
-          fi
-          echo "udid=$udid" >> "$GITHUB_OUTPUT"
-          # 既に起動していると boot は「Unable to boot device in current state」で失敗する。
-          # 起動できたかどうかの判定は後段の bootstatus に任せる。
-          xcrun simctl boot "$udid" || true
-          xcrun simctl bootstatus "$udid" -b
-          xcrun simctl list devices booted
-
       - name: Install the app on the simulator
         run: |
           xcrun simctl install "${{ steps.sim.outputs.udid }}" \
             example/ios/build/Build/Products/Release-iphonesimulator/expovoicevoxexample.app
+
+      # 一度起動して落とす。SpringBoard がアプリを起動できるところまで進んだことの確認と、
+      # dyld キャッシュの暖機を兼ねる。ここで失敗するならフローを回しても意味が無い。
+      - name: Warm up the app
+        run: |
+          xcrun simctl launch "${{ steps.sim.outputs.udid }}" expo.modules.voicevox.example
+          sleep 20
+          xcrun simctl terminate "${{ steps.sim.outputs.udid }}" expo.modules.voicevox.example || true
 
       - name: Install Maestro
         run: |
@@ -381,7 +396,13 @@ jobs:
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
 
       # 起動しているのはこの 1 台だけなので --platform ios で足りる（npm run e2e:ios と同じ形）。
+      #
+      # MAESTRO_DRIVER_STARTUP_TIMEOUT は XCUITest ドライバがポートを開けるまでの待ち時間。
+      # 既定の 120 秒は 3 vCPU のランナーでは足りず、
+      # 「iOS driver not ready in time」で 1 本も走らずに終わる（手元の Mac では 4 秒で開く）。
       - name: Run the Maestro flows
+        env:
+          MAESTRO_DRIVER_STARTUP_TIMEOUT: 600000
         run: |
           maestro test --platform ios \
             --config .maestro/config.ci.yaml ${{ needs.scope.outputs.args }} \
