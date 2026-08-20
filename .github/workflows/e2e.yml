@@ -159,6 +159,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
+          cores: 3
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: false
@@ -189,9 +190,14 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
+          cores: 3
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
+          # hide_error_dialogs を立てないと「Pixel Launcher isn`t responding」の ANR ダイアログが
+          # 最前面を占有し、アプリは正常なのに Maestro が lib-version を見つけられず
+          # 全フローが launch の 120 秒待ちで落ちる（full スイートで実際に 9/9 失敗した）。
+          #
           # 200MB の APK を入れた直後は PackageManager の dexopt でエミュレータが忙しく、
           # スナップショットから復元した直後の adb が「device offline」で一瞬落ちる。
           # 実際 00-assets と 01-initialize が launchApp の時点で
@@ -203,6 +209,7 @@ jobs:
           script: |
             adb install -r example/android/app/build/outputs/apk/release/app-release.apk
             adb wait-for-device
+            adb shell settings put global hide_error_dialogs 1
             sleep 60
             adb wait-for-device
             maestro test ${{ steps.scope.outputs.args }} --format junit --output maestro-report.xml --debug-output .maestro/output --flatten-debug-output .maestro
