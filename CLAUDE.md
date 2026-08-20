@@ -210,6 +210,8 @@ gh workflow run e2e.yml --ref feat/xxx -f scope=smoke && gh run watch
 - **アセットは実行時に展開しない**。iOS は `.app` の中のフォルダ参照をそのまま読むので、ビルド直後に `find .../*.app/voicevox -maxdepth 1` で構造ごと入ったことを確かめてから先へ進む。
 - **シミュレータはビルドより先に起動する**。ランナーでの初回 boot は `simctl bootstatus` だけで 4 分近くかかる（手元の Mac では 4 秒）。prebuild とビルドの数分をそのまま暖機に充てられるので、`npm ci` より前に置くこと。
 - **`MAESTRO_DRIVER_STARTUP_TIMEOUT` を伸ばす**。XCUITest ドライバがポートを開けるまでの待ちで、既定の 120 秒は 3 vCPU のランナーでは足りない。足りないと **1 本もフローが走らないまま**「iOS driver not ready in time」で終わる（手元の Mac では 4 秒で開くので、ローカルでは絶対に踏まない）。600 秒にしてある。
+- **画面に収まる行数が Android と違う**。`03-params` の「開始の無音」は話速の 4 行下にあり、iPhone では話速と同時に映らない。**Android で通っているフローが iOS でだけ `assertVisible` に落ちる**ことがあるので、`assertVisible` の前に `scrollUntilVisible` で運ぶ規則は iOS でより厳しく効く。
+- 所要時間の実測（full / 9 フロー）は iOS ジョブが 24 分。内訳は Maestro の 9 本が 10.7 分、`simctl bootstatus` が 3.9 分、`xcodebuild` が 3.3 分、`pod install` が 2.8 分。**`bootstatus` はステップとして直列に 4 分待つ**（`boot` 自体は即座に返る）ので、詰めたいならここを後ろのステップへ分けて待つ形にする余地がある。
 
 #### Expo のメジャー追随（`expo-major-watch.yml`）
 
