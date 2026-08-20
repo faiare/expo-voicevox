@@ -186,8 +186,11 @@ CI 側の作りで踏みやすいのは 2 点。
   の既定値には入っているが、音が鳴ったかの判断は `speech-state`（`AudioTrack` が出す実際の状態遷移）に
   頼っているので、音声デバイスを殺すと `02-synthesis` の検証が空になる。
 - **APK は `-PreactNativeArchitectures=x86_64` の Release**。Debug は LogBox がタップを吸う。
-- **ANR ダイアログを抑止する**（`settings put global hide_error_dialogs 1`）。「Pixel Launcher
-  isn`t responding」が最前面に出ると、アプリは正常でも全フローが launch の待ちで落ちる。
+- **エミュレータの RAM は 6GB**。既定の 2GB では 130MB の展開とモデルの読み込みでシステムが
+  圧迫され、「Pixel Launcher isn`t responding」が最前面に出る。アプリは正常でも全フローが
+  launch の待ちで落ちるので、スクリーンショットを見ないと原因が分からない。
+- **CI は `--config .maestro/config.ci.yaml` で fail-fast**。1 本目が落ちたら止める。ローカルは
+  `config.yaml`（`continueOnFailure: true`）のままで、全部の結果が出る。
 - **`adb install` の直後は待つ**。200MB の APK の dexopt でエミュレータが忙しく、adb が
   `device offline` で一瞬落ちて `launchApp` が `DeviceServerDiedException` になる。
 - **エミュレータの前に `pulseaudio` のダミーシンクを立てている**。無いと `02-synthesis` が

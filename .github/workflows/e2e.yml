@@ -147,7 +147,8 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-34-google_apis-x86_64
+          # AVD は ram-size / cores を焼き込んで作られる。変えたらこのキーも変えること。
+          key: avd-34-google_apis-x86_64-ram6144-cores3
 
       # キャッシュが無いときだけ、空のフローで 1 度起動してスナップショットを作る。
       # ここは音を鳴らさないので -noaudio でよい。
@@ -160,6 +161,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           cores: 3
+          ram-size: 6144M
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: false
@@ -191,6 +193,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           cores: 3
+          ram-size: 6144M
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
@@ -210,9 +213,10 @@ jobs:
             adb install -r example/android/app/build/outputs/apk/release/app-release.apk
             adb wait-for-device
             adb shell settings put global hide_error_dialogs 1
+            adb shell settings get global hide_error_dialogs
             sleep 60
             adb wait-for-device
-            maestro test ${{ steps.scope.outputs.args }} --format junit --output maestro-report.xml --debug-output .maestro/output --flatten-debug-output .maestro
+            maestro test --config .maestro/config.ci.yaml ${{ steps.scope.outputs.args }} --format junit --output maestro-report.xml --debug-output .maestro/output --flatten-debug-output .maestro
 
       # --debug-output を明示しているので、スクリーンショットとログはここに集まる
       # （既定の ~/.maestro/tests/{timestamp}/ はランナーから拾いにくい）。
