@@ -18,6 +18,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-dict-fill-sample'
 - tapOn:
@@ -39,6 +40,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-dict-fill-sample'
 
@@ -51,6 +53,7 @@ tags:
     direction: UP
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'wordtype-chip-COMMON_NOUN'
 # 押せたことをその場で確かめる。Chip には accessibilityState を付けてあるので
@@ -64,6 +67,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - assertVisible:
     id: 'dict-priority-value'
     text: '5'
@@ -80,6 +84,7 @@ tags:
     direction: UP
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'input-dict-surface'
 # eraseText は既定だと消す文字数が足りず「四国めたん」が残る。多めに指定する。
@@ -97,6 +102,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-dict-add'
 - runFlow: subflows/wait-idle.yaml
@@ -109,6 +115,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - assertVisible:
     id: 'dict-word-1'
     text: '.*VOICEVOX → シコクメタン（COMMON_NOUN.*優先度 6）.*'
@@ -120,6 +127,7 @@ tags:
     direction: UP
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-initialize'
 - extendedWaitUntil:
@@ -133,6 +141,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-synthesize-play'
 - runFlow: subflows/wait-idle-long.yaml
@@ -147,6 +156,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-dict-remove-0'
 - runFlow: subflows/wait-idle.yaml

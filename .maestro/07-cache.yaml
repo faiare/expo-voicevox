@@ -10,14 +10,16 @@ tags:
 ---
 - runFlow: subflows/initialize.yaml
 
-# ここは画面の最下部なので centerElement を付けない。付けると「見えているのに
-# 中央へ寄せられない」状態でリトライし続け、20 秒のタイムアウトで
-# 「No visible element found」になる。
+# ここはページの最下部（8 セクション目）で、speed 30 だと到達までにスワイプが
+# 8 回前後かかる。CI のエミュレータでは 1 回 2.6 秒ほどなので、既定の 20 秒では
+# 到達した直後にタイムアウトする（映っているのに No visible element found になる）。
+# centerElement も付けない。最下部はこれ以上スクロールできず中央へ寄せられない。
 - scrollUntilVisible:
     element:
       id: 'btn-cache-clear'
     direction: DOWN
     speed: 30
+    timeout: 120000
 
 - tapOn:
     id: 'btn-cache-clear'

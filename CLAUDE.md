@@ -141,7 +141,8 @@ Metro を起動し直してからアプリを再起動する**のが確実。app
   ごと消える。example は `react-native-safe-area-context` を使っている。
 - Android の `initialize()` は暗黙に `prepareAssets()` を呼ぶ。初回は 130MB の展開を含むので、
   初期化と合成の待ちは 300 秒にしてある。`00-assets` を先頭に固定してこのコストを 1 本目で払う。
-- **画面の最下部を指すときは `scrollUntilVisible` の `centerElement` を外す**。要素が見えたあと中央へ寄せようとするが、最下部はこれ以上スクロールできず収束しない。`Visibility Percent: 1.0` のままリトライし続け、20 秒のタイムアウトで `No visible element found` になる（**画面に映っているのに見つからない**という読めない落ち方をする）。同じ理由で、`assertVisible` の前にはその要素まで `scrollUntilVisible` で戻すこと（`03-params` は `btn-params-reset` の位置のまま話速を assert していて落ちた）。
+- **遠くまでスクロールするフローは `scrollUntilVisible` の `timeout` を伸ばす**。既定は 20 秒だが、`speed: 30` のスワイプは CI のエミュレータで 1 回 2.6 秒かかり、8 セクションある画面の最下部までは 8 回前後必要で間に合わない。**エラーは `No visible element found` なのに失敗時のスクリーンショットには目的の要素が映っている**（最後のスワイプで到達し、次の確認の前に時間切れになる）ので読み違えやすい。最下部を指すときは `centerElement` も外す（寄せられずに残り時間を使い切る）。
+- **`assertVisible` の前にはその要素まで `scrollUntilVisible` で戻す**。`03-params` は `btn-params-reset` までスクロールした位置のまま話速を assert していて、行が画面の上に隠れて落ちた。
 - **`clearState` は既定のフローでは使わない**。Android では展開済みのモデルと辞書ごと消える。
   中断の検証（`90-prepare-cancel`）だけは避けられないので `manual` タグで既定から外してある。
 - `.mcp.json` に Maestro の MCP サーバを登録してあるので、フローを書いて即実行し、

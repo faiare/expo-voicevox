@@ -20,6 +20,7 @@ tags:
     direction: DOWN
     centerElement: true
     speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-synthesize-play'
 - runFlow: subflows/wait-idle-long.yaml
