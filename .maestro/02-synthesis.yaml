@@ -41,6 +41,18 @@ tags:
     id: 'dir-chip-cache'
 
 # --- speak(): ファイルを作らず、メモリ上の WAV をネイティブでそのまま鳴らす ---
+# speech-state は btn-stop-speaking の下に出る。btn-synthesize-play を中央にした
+# 位置のままだと画面からはみ出し、assertVisible が「映っていない」で落ちる
+# （上部ステータスバーの高さが本文の行数で変わるので、入るかどうかが安定しない）。
+# ここを中央に寄せておくと btn-speak が上、speech-state が直下に収まり、
+# 以降の speech-state の assert がすべて画面内に入る。
+- scrollUntilVisible:
+    element:
+      id: 'btn-stop-speaking'
+    direction: DOWN
+    centerElement: true
+    speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-speak'
 - extendedWaitUntil:
