@@ -54,18 +54,22 @@ jobs:
       # node_modules は要らない（maestro を直接叩くだけ）ので npm ci は省く。
       - run: npm run e2e:lint
 
-  android:
-    name: Maestro (Android)
+  # 回すフローの範囲は android と ios で同じ。ジョブごとに書くと片方だけ直して食い違うので、
+  # 1 か所で決めて outputs で配る。PR の `e2e` ラベルによる出し分けもここへ集約してある。
+  # このジョブが skip されれば、needs で繋がった端末ジョブもまとめて skip される。
+  # ラベルが無い PR では skip されるので、端末ジョブを required status check にしては
+  # いけない（永久に pending になる）。
+  scope:
+    name: resolve-scope
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    # PR では `e2e` ラベルが付いているときだけ。ラベルが無いと skip されるので、
-    # このジョブを required status check にしてはいけない（永久に pending になる）。
+    timeout-minutes: 5
     if: >-
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'e2e')
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+      args: ${{ steps.scope.outputs.args }}
     steps:
-      - uses: actions/checkout@v5
-
       - name: Resolve the flow scope
         id: scope
         run: |
@@ -75,13 +79,25 @@ jobs:
             scope="${{ inputs.scope || 'full' }}"
           fi
           echo "scope=$scope" >> "$GITHUB_OUTPUT"
-          # full のときは引数なし。.maestro/config.yaml の excludeTags が manual を外す。
+          # full のときは引数なし。.maestro/config.ci.yaml の excludeTags が manual を外す。
           if [ "$scope" = "smoke" ]; then
             echo "args=--include-tags smoke" >> "$GITHUB_OUTPUT"
           else
             echo "args=" >> "$GITHUB_OUTPUT"
           fi
           echo "### E2E scope: \`$scope\`" >> "$GITHUB_STEP_SUMMARY"
+
+  android:
+    name: Maestro (Android)
+    # Android のエミュレータは x86_64 のまま。arm64 にはできない
+    # （Linux arm64 ランナーには /dev/kvm が無く、macOS ランナーは VM の中なので
+    # ネスト仮想化が使えず HVF が HV_UNSUPPORTED で落ちる）。実機に近い arm64 の
+    # 検証は ios ジョブ（macos-15 = Apple Silicon）が担う。
+    runs-on: ubuntu-latest
+    needs: scope
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
         with:
@@ -216,7 +232,7 @@ jobs:
             adb shell settings get global hide_error_dialogs
             sleep 60
             adb wait-for-device
-            maestro test --config .maestro/config.ci.yaml ${{ steps.scope.outputs.args }} --format junit --output maestro-report.xml --debug-output .maestro/output --flatten-debug-output .maestro
+            maestro test --config .maestro/config.ci.yaml ${{ needs.scope.outputs.args }} --format junit --output maestro-report.xml --debug-output .maestro/output --flatten-debug-output .maestro
 
       # --debug-output を明示しているので、スクリーンショットとログはここに集まる
       # （既定の ~/.maestro/tests/{timestamp}/ はランナーから拾いにくい）。
@@ -224,7 +240,149 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: maestro-android-${{ steps.scope.outputs.scope }}
+          name: maestro-android-${{ needs.scope.outputs.scope }}
+          path: |
+            .maestro/output
+            maestro-report.xml
+          if-no-files-found: ignore
+
+  ios:
+    name: Maestro (iOS)
+    # macos-15 は Apple Silicon（arm64）で、public リポジトリなら無料・無制限で使える。
+    # シミュレータは仮想化を使わないので、Android エミュレータを arm64 で回せない理由
+    # （macOS ランナーは VM の中で HVF が HV_UNSUPPORTED になる）には当たらない。
+    runs-on: macos-15
+    needs: scope
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            example/package-lock.json
+
+      # maestro は JVM アプリなので iOS 側にも Java が要る。
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 中身は android ジョブと同じだが runner.os が macOS なのでキーは別物。
+      # iOS はモデルと辞書をフォルダ参照で .app に載せるため、prebuild より先に要る。
+      - name: Cache voicevox-core artifacts
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/expo-voicevox
+          key: >-
+            voicevox-${{ runner.os }}-${{ hashFiles('plugin/src/core/versions.ts',
+            'plugin/src/core/artifacts.generated.ts', 'example/app.json') }}
+
+      # prepare が plugin/build/withVoicevox を作るので prebuild より先に必要。
+      - run: npm ci
+
+      - name: Install example dependencies
+        run: npm ci
+        working-directory: example
+
+      - name: Prebuild the example app (iOS)
+        run: npx expo prebuild --platform ios --no-install
+        working-directory: example
+
+      # --no-install は npm と CocoaPods の両方を飛ばすので pod install は自分で呼ぶ。
+      # example に Gemfile は無いので bundle exec は要らない（CocoaPods はランナー同梱）。
+      - name: Install the CocoaPods dependencies
+        run: pod install
+        working-directory: example/ios
+
+      # Release で焼く。Debug は LogBox がタップを吸ううえ Metro が要る（.maestro/README.md）。
+      # Release のビルドフェーズが JS バンドルを .app に埋めるので Metro は不要。
+      # 署名は要らない（simctl install はシミュレータ向けの .app をそのまま受け取る）。
+      - name: Build the app for the simulator
+        run: |
+          xcodebuild -workspace expovoicevoxexample.xcworkspace \
+            -scheme expovoicevoxexample \
+            -configuration Release \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+        working-directory: example/ios
+
+      # iOS は Android と違って実行時の展開が無く、.app の中をそのまま読む。
+      # 構造ごと入っていなければ 00-assets ではなく起動直後に落ちるので、ここで先に落とす。
+      - name: Verify that the assets landed in the app bundle
+        run: find example/ios/build/Build/Products/Release-iphonesimulator/*.app/voicevox -maxdepth 1
+
+      # シミュレータの再生はホスト macOS の CoreAudio に出る。ランナーイメージの
+      # Null Audio Device は起動時の初期化に失敗することが 3 割ほどあり
+      # （actions/runner-images#13668）、出力デバイスが 1 つも無いと
+      # AVAudioPlayer.play() が false を返して 02-synthesis が
+      # 「could not start the audio player」で落ちる。Android 側の module-null-sink と同じ役目。
+      #
+      # BlackHole の追加インストールは再起動しないと効かない（runner-images#11746）ので、
+      # 既にイメージへ入っているデバイスを coreaudiod の再起動で拾い直す。
+      - name: Ensure a host audio output device
+        run: |
+          if ! system_profiler SPAudioDataType | grep -qi output; then
+            echo "no audio output device; restarting coreaudiod."
+            sudo killall coreaudiod || true
+            for _ in 1 2 3 4 5 6; do
+              sleep 5
+              system_profiler SPAudioDataType | grep -qi output && break
+            done
+          fi
+          system_profiler SPAudioDataType || true
+
+      # 端末名はランナーイメージの Xcode に紐づいて変わるので固定しない。
+      # 使えるランタイムのうち新しいほうから iPhone を 1 台選ぶ。
+      - name: Boot the simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available --json \
+            | jq -r '.devices | to_entries
+                | map(select(.key | test("SimRuntime[.]iOS")))
+                | sort_by(.key) | last | .value
+                | map(select(.name | test("^iPhone"))) | last | .udid')
+          if [ -z "$udid" ] || [ "$udid" = "null" ]; then
+            echo "no iPhone simulator is available." >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          # 既に起動していると boot は「Unable to boot device in current state」で失敗する。
+          # 起動できたかどうかの判定は後段の bootstatus に任せる。
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl list devices booted
+
+      - name: Install the app on the simulator
+        run: |
+          xcrun simctl install "${{ steps.sim.outputs.udid }}" \
+            example/ios/build/Build/Products/Release-iphonesimulator/expovoicevoxexample.app
+
+      - name: Install Maestro
+        run: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      # 起動しているのはこの 1 台だけなので --platform ios で足りる（npm run e2e:ios と同じ形）。
+      - name: Run the Maestro flows
+        run: |
+          maestro test --platform ios \
+            --config .maestro/config.ci.yaml ${{ needs.scope.outputs.args }} \
+            --format junit --output maestro-report.xml \
+            --debug-output .maestro/output --flatten-debug-output .maestro
+
+      - name: Upload the Maestro artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: maestro-ios-${{ needs.scope.outputs.scope }}
           path: |
             .maestro/output
             maestro-report.xml

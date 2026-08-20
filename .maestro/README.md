@@ -163,8 +163,10 @@ Android の `initialize()` は暗黙に `prepareAssets()` を呼ぶので、初�
 
 ## CI で回す
 
-`.github/workflows/e2e.yml` が **Android（ubuntu-latest のエミュレータ）だけ**回す。iOS はまだ
-入っていない（macOS ランナー自体は public リポジトリなら無料で使える）。
+`.github/workflows/e2e.yml` が **Android（ubuntu-latest のエミュレータ）と iOS（macos-15 の
+シミュレータ）**を並列で回す。どちらのランナーも public リポジトリなら無料・無制限で使える。
+範囲の決定は `scope` ジョブ 1 つに集約してあり、`e2e` ラベルによる出し分けもここが持つ
+（skip されれば端末ジョブも一緒に skip される）。
 
 | トリガ | 範囲 |
 |---|---|
@@ -191,6 +193,18 @@ CI 側の作りで踏みやすいのは 2 点。
   の既定値には入っているが、音が鳴ったかの判断は `speech-state`（`AudioTrack` が出す実際の状態遷移）に
   頼っているので、音声デバイスを殺すと `02-synthesis` の検証が空になる。
 - **APK は `-PreactNativeArchitectures=x86_64` の Release**。Debug は LogBox がタップを吸う。
+  **Android のエミュレータを arm64 にはできない**。Linux arm64 ランナーには `/dev/kvm` が無く、
+  macOS ランナーは VM の中なのでネスト仮想化が効かず HVF が `HV_UNSUPPORTED` で落ちる。
+  arm64 の検証は iOS（macos-15 = Apple Silicon）が担う。
+- **iOS も Release**（`xcodebuild -configuration Release -sdk iphonesimulator`）。Release の
+  ビルドフェーズが JS バンドルを `.app` に埋めるので Metro が要らない。端末は
+  `xcrun simctl list devices available --json` から**新しいランタイムの iPhone を 1 台選ぶ**
+  （端末名を固定するとランナーイメージの Xcode が上がった時点で落ちる）。
+- **iOS の再生はホスト macOS の CoreAudio に出る**。ランナーイメージの Null Audio Device は
+  起動時の初期化に 3 割ほど失敗する（actions/runner-images#13668）ので、出力デバイスが
+  無ければ `coreaudiod` を再起動して拾い直している。無いままだと `AVAudioPlayer.play()` が
+  false を返し、`02-synthesis` が「could not start the audio player」で落ちる。
+  **BlackHole の追加インストールでは直らない**（反映に再起動が要る。runner-images#11746）。
 - **エミュレータの RAM は 6GB**。既定の 2GB では 130MB の展開とモデルの読み込みでシステムが
   圧迫され、「Pixel Launcher isn`t responding」が最前面に出る。アプリは正常でも全フローが
   launch の待ちで落ちるので、スクリーンショットを見ないと原因が分からない。
