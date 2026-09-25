@@ -421,7 +421,7 @@ Swift の `String` を `voicevox_user_dict_word_make` にそのまま渡して�
 
 ### バージョン注意
 
-- モジュール本体の devDependencies は expo `^57.0.13` / TypeScript `^5.9.2`、example は TypeScript `~6.0.3` と**食い違っている**（テンプレート生成時の差）。型エラーやビルド差異が出たらまずここを疑う。react-native は両方 `0.86.2` で揃っている。
+- モジュール本体の devDependencies は expo `^57.0.25` / TypeScript `^5.9.2`、example は TypeScript `~6.0.3` と**食い違っている**（テンプレート生成時の差）。型エラーやビルド差異が出たらまずここを疑う。react-native は両方 `0.86.3` で揃っている。
 - Android は新アーキテクチャ有効（`newArchEnabled=true`）、Hermes 有効。
 
 ### Expo のドキュメント参照

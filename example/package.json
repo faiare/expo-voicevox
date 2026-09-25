@@ -4,10 +4,10 @@
   "main": "index.ts",
   "dependencies": {
     "expo": "~57.0.25",
-    "expo-asset": "~57.0.11",
-    "expo-audio": "~57.0.3",
+    "expo-asset": "~57.0.18",
+    "expo-audio": "~57.0.5",
     "react": "19.2.3",
-    "react-native": "0.86.2",
+    "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0"
   },
   "devDependencies": {
