@@ -15,11 +15,48 @@ appId: expo.modules.voicevox.example
 # getVersion() が通ったこと（= ネイティブライブラリのリンクとロードに成功した
 # こと）をレディネスの判定にする。「（未取得）」のままなら、そこで落ちている。
 # Debug ビルドは Metro からバンドルを取るぶん起動が遅いので長めに待つ。
-- extendedWaitUntil:
-    visible:
-      id: 'lib-version'
-      text: '.*\d+\.\d+\.\d+.*'
-    timeout: 120000
+#
+# CI のエミュレータでは、hide_error_dialogs を立てていても「Pixel Launcher isn't
+# responding」の ANR ダイアログがまれに最前面へ出る。出ているあいだ Maestro には
+# ダイアログのウィンドウしか見えず、アプリが正常に起動していても lib-version を
+# 見つけられない。そこで 1 回にまとめて待たず、10 秒ずつ最大 12 回（計 120 秒）に
+# 分けて、各回の頭でダイアログが出ていれば「Close app」で閉じる。
+#
+# - 「Wait」では直らない。詰まったままのプロセスに対しては 5 秒ほどで同じダイアログが
+#   出し直される（ランチャーを SIGSTOP した API 34 のエミュレータで 12 回とも再表示された）。
+#   「Close app」なら詰まったプロセスが終わり、システムがランチャーを起動し直す。
+# - ボタンは文言ではなく AOSP の app_anr_dialog.xml の ID で引く。言語に依存しない。
+# - テスト対象のアプリ自身の ANR は閉じない。閉じると本物の不具合を隠すので、
+#   タイトルにアプリ名が出ているときは触らず、そのまま待ちの時間切れで落とす。
+# - iOS では一致しないので何もしない。
+- repeat:
+    times: 12
+    while:
+      notVisible:
+        id: 'lib-version'
+        text: '.*\d+\.\d+\.\d+.*'
+    commands:
+      - runFlow:
+          when:
+            visible:
+              id: 'android:id/aerr_close'
+            notVisible:
+              id: 'android:id/alertTitle'
+              text: '.*expo-voicevox-example.*'
+          commands:
+            - tapOn:
+                id: 'android:id/aerr_close'
+      - extendedWaitUntil:
+          visible:
+            id: 'lib-version'
+            text: '.*\d+\.\d+\.\d+.*'
+          timeout: 10000
+          optional: true
+
+# ループを使い切っても見えなければ、ここで従来どおりの理由で落とす。
+- assertVisible:
+    id: 'lib-version'
+    text: '.*\d+\.\d+\.\d+.*'
 
 - assertVisible:
     id: 'status-busy'
