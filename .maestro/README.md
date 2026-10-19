@@ -214,6 +214,11 @@ CI 側の作りで踏みやすいのは 2 点。
 - **エミュレータの RAM は 6GB**。既定の 2GB では 130MB の展開とモデルの読み込みでシステムが
   圧迫され、「Pixel Launcher isn`t responding」が最前面に出る。アプリは正常でも全フローが
   launch の待ちで落ちるので、スクリーンショットを見ないと原因が分からない。
+  `hide_error_dialogs` を立ててもまれにすり抜ける（8/20 以降で 11 回に 1 回）ので、
+  `subflows/launch.yaml` の起動待ちは 10 秒 × 最大 12 回に分けてあり、各回の頭で
+  ダイアログの「Close app」（`android:id/aerr_close`）が見えていれば押して閉じる。
+  「Wait」では詰まったプロセスに対して 5 秒ほどで出し直されるので効かない。
+  テスト対象のアプリ自身の ANR（タイトルに `expo-voicevox-example`）は閉じない。
 - **CI は `--config .maestro/config.ci.yaml` で fail-fast**。1 本目が落ちたら止める。ローカルは
   `config.yaml`（`continueOnFailure: true`）のままで、全部の結果が出る。
 - **`adb install` の直後は待つ**。200MB の APK の dexopt でエミュレータが忙しく、adb が
