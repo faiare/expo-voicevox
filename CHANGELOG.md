@@ -1,5 +1,22 @@
 # @faiare/expo-voicevox
 
+## 0.4.0
+
+### Minor Changes
+
+- [#20](https://github.com/faiare/expo-voicevox/pull/20) [`152b387`](https://github.com/faiare/expo-voicevox/commit/152b387e4e36347e6f46e076fe4522135f794711) Thanks [@faiare](https://github.com/faiare)! - Expo SDK 58（React Native 0.88）に追随した。
+
+  - SDK 58 からアプリの release ビルドで R8 が既定で有効になり、voicevoxcore-android の
+    クラス名が潰されて Android の `initialize()` が例外も出さずに戻らなくなっていた。
+    モジュールに consumer ProGuard rules（`android/consumer-rules.pro`）を同梱したので、
+    利用側で keep ルールを書き足す必要はない。SDK 57 以前でも `android.enableMinifyInReleaseBuilds`
+    を有効にしていたアプリは同じ理由で壊れていたので、このリリースで直る
+  - Android で `initialize()` / `setUserDictWords()` を呼ぶたびに ExpoModulesCore が出していた
+    「Introspectable data is missing」の警告を消した。引数の Record をコンパイル時に変換する
+    経路（`@OptimizedRecord`）に乗せたので、実行時のリフレクションも走らない
+  - 開発と検証の対象を SDK 58 に移した。iOS のデプロイメントターゲット（16.4）と
+    Android の minSdk（26）は変わらない
+
 ## 0.3.1
 
 ### Patch Changes
