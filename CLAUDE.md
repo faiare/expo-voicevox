@@ -269,6 +269,7 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
 
 - **iOS**: `ios/ExpoVoicevox.podspec` の `source_files` は `"*.{h,m,mm,swift}"`（`ios/` 直下のみ）。再帰 glob にすると `Frameworks/` 配下の `voicevox_core.h` までコンパイル対象に入るため意図的に絞ってある。**新しい Swift ファイルは `ios/` 直下に置くこと**（サブディレクトリだと拾われない）。xcframework は `vendored_frameworks` で持ち込む。`s.static_framework = true`、デプロイメントターゲットは iOS 16.4。
 - **Android**: `android/build.gradle` は `expo-module-gradle-plugin` 前提の最小構成。ネイティブ共有ライブラリは `android/src/main/jniLibs/<abi>/` に置く。voicevox-core が配布しているのは **`arm64-v8a` と `x86_64` のみ**で、ABI の絞り込みは gradle.properties の `reactNativeArchitectures` で行う（`expo-build-properties` の `buildArchs` と同じ経路）。
+- **Android: R8 の keep ルールは `android/consumer-rules.pro` に置き、`consumerProguardFiles` でアプリへ渡している**。SDK 58 からアプリの release は R8 が既定で有効（`android.enableMinifyInReleaseBuilds=true`）で、voicevoxcore-android の jar は consumer rules を同梱していない。名前を潰されると Rust の JNI がクラスを引けず、**`initialize()` が例外もログも出さずに戻らなくなる**（E2E では 01-initialize が 300 秒待ちで落ちるだけ）。Debug と JVM ユニットテストでは R8 が走らないので、ここを触ったら Release の APK で確かめること。ファイルを増やしたら `package.json` の `files` にも足す。
 - **モデル・辞書ファイル**: voicevox-core は VVM モデルと OpenJTalk 辞書を実行時にファイルパスで読む（Java API も `VoiceModelFile(String)` / `OpenJtalk(String)` のみで FD 版が無い）。iOS はフォルダ参照でバンドルに載せて `.app` 内をそのまま読むので展開不要、**Android は APK 内 assets に実パスが無いので `noBackupFilesDir` への展開が必須**。`filesDir` を使うと 173MB が Android Auto Backup（上限 25MB）の対象になって壊れるので使わない。
 - **同期/非同期**: 合成処理は重い。`Function` ではなく `AsyncFunction`（iOS/Android 共通）で公開し、JS スレッドをブロックしないこと。同期で公開しているのは `getVersion` と `isInitialized` だけで、`isInitialized` は直列キュー / ロックの外から読まれるため iOS は `NSLock` で守った Bool、Android は `@Volatile` にしてある。**`engineQueue.sync` で借りてはいけない**（数秒かかる合成の完了まで JS スレッドが止まる）。
 
@@ -421,12 +422,12 @@ Swift の `String` を `voicevox_user_dict_word_make` にそのまま渡して�
 
 ### バージョン注意
 
-- モジュール本体の devDependencies は expo `^57.0.25` / TypeScript `^5.9.2`、example は TypeScript `~6.0.3` と**食い違っている**（テンプレート生成時の差）。型エラーやビルド差異が出たらまずここを疑う。react-native は両方 `0.86.3` で揃っている。
+- モジュール本体の devDependencies は expo `^58.0.14` / TypeScript `^5.9.2`、example は TypeScript `~6.0.3` と**食い違っている**（テンプレート生成時の差）。型エラーやビルド差異が出たらまずここを疑う。react-native は両方 `0.88.0` で揃っている（SDK 58 で 0.86 → 0.88。0.87 から Strict TypeScript API が既定になり、`react-native/Libraries/*` への deep import は型エラーになる）。jest-expo 58 は `@react-native/jest-preset` を peer で要求するので、モジュール本体の devDependencies に `0.88.0` で明示してある。
 - Android は新アーキテクチャ有効（`newArchEnabled=true`）、Hermes 有効。
 
 ### Expo のドキュメント参照
 
-`example/AGENTS.md` に「Expo は仕様が変わっている。コードを書く前に https://docs.expo.dev/versions/v57.0.0/ のバージョン固定ドキュメントを読むこと」と明記されている。Expo Modules API を触る際はこれに従う。
+`example/AGENTS.md` に「Expo は仕様が変わっている。コードを書く前に https://docs.expo.dev/versions/v58.0.0/ のバージョン固定ドキュメントを読むこと」と明記されている。Expo Modules API を触る際はこれに従う。
 
 ## コードスタイル
 

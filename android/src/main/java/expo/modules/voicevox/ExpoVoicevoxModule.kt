@@ -6,6 +6,7 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
+import expo.modules.kotlin.types.OptimizedRecord
 import java.io.File
 import java.util.UUID
 import jp.hiroshiba.voicevoxcore.GlobalInfo
@@ -15,7 +16,11 @@ import jp.hiroshiba.voicevoxcore.UserDictWord
  * `initialize()` に渡される JS 側のオプション。
  *
  * パスが省略された（null の）場合は、config plugin が配置したアセットを自動で解決する。
+ *
+ * `@OptimizedRecord` はコンパイル時に変換用のメタデータを生成させる（無いと実行時の
+ * リフレクションに落ち、ExpoModulesCore が警告を出す）。
  */
+@OptimizedRecord
 class VoicevoxInitializeOptions : Record {
   @Field val openJtalkDictDir: String? = null
 
@@ -32,6 +37,7 @@ class VoicevoxInitializeOptions : Record {
 }
 
 /** ユーザー辞書へ登録する単語。既定値は JS 側で埋まっている。 */
+@OptimizedRecord
 class VoicevoxUserDictWordRecord : Record {
   @Field val surface: String = ""
 

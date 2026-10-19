@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@faiare/expo-voicevox?style=flat-square&logo=npm&logoColor=white&label=npm&color=cb3837)](https://www.npmjs.com/package/@faiare/expo-voicevox)
 [![CI](https://img.shields.io/github/actions/workflow/status/faiare/expo-voicevox/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/faiare/expo-voicevox/actions/workflows/ci.yml)
-[![Expo SDK 57](https://img.shields.io/badge/Expo%20SDK-57-000020?style=flat-square&logo=expo&logoColor=white)](https://docs.expo.dev/versions/v57.0.0/)
+[![Expo SDK 58](https://img.shields.io/badge/Expo%20SDK-58-000020?style=flat-square&logo=expo&logoColor=white)](https://docs.expo.dev/versions/v58.0.0/)
 [![platforms iOS and Android](https://img.shields.io/badge/platforms-iOS%20%7C%20Android-4c8eda?style=flat-square)](#requirements)
 [![License MIT](https://img.shields.io/npm/l/@faiare/expo-voicevox?style=flat-square&color=blue)](./LICENSE)
 
@@ -20,7 +20,7 @@ iOS and Android only. Web is not supported.
 ## Requirements
 
 - An Expo project using prebuild (CNG). Expo Go is not supported — developed and tested against
-  SDK 57
+  SDK 58
 - iOS 16.4+
 - Android 8.0 (API 26)+, `arm64-v8a` / `x86_64`
 

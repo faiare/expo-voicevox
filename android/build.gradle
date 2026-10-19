@@ -13,6 +13,8 @@ android {
     minSdk 26
     versionCode 1
     versionName "0.1.0"
+    // アプリ側の R8 に渡す keep ルール（voicevoxcore-android の JNI と Gson の反射を守る）。
+    consumerProguardFiles "consumer-rules.pro"
     ndk {
       // voicevox_core / ONNX Runtime が配布されているのは arm64-v8a と x86_64 のみ。
       abiFilters "arm64-v8a", "x86_64"
