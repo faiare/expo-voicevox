@@ -40,7 +40,7 @@ struct VoicevoxUserDictWordRecord: Record {
 }
 
 /// voicevox-core 由来のエラーを JS へ伝えるための例外。
-final class VoicevoxException: GenericException<String> {
+final class VoicevoxException: GenericException<String>, @unchecked Sendable {
   override var reason: String {
     param
   }
@@ -50,7 +50,7 @@ final class VoicevoxException: GenericException<String> {
 ///
 /// メッセージの文言は JS の `isPrepareAssetsCancelled()` と Android 側の
 /// `VoicevoxCancelledException` が一致していることに依存している。変えるときは 3 箇所とも直すこと。
-final class VoicevoxCancelledException: Exception {
+final class VoicevoxCancelledException: Exception, @unchecked Sendable {
   override var reason: String {
     "the asset preparation was cancelled"
   }
@@ -73,8 +73,10 @@ public class ExpoVoicevoxModule: Module {
 
     Events("onPrepareProgress", "onSpeechStateChange")
 
-    OnCreate {
-      // モジュールが player を所有するので、コールバック側は弱参照にして循環させない。
+    // モジュールが player を所有するので、コールバック側は弱参照にして循環させない。
+    // 外側も弱参照にしておかないと、内側の [weak self] が外側の暗黙の強参照と食い違う。
+    OnCreate { [weak self] in
+      guard let self else { return }
       self.player.onStateChange = { [weak self] id, state, reason in
         self?.sendEvent(
           "onSpeechStateChange",

@@ -9,5 +9,8 @@ Expo SDK 58（React Native 0.88）に追随した。
   モジュールに consumer ProGuard rules（`android/consumer-rules.pro`）を同梱したので、
   利用側で keep ルールを書き足す必要はない。SDK 57 以前でも `android.enableMinifyInReleaseBuilds`
   を有効にしていたアプリは同じ理由で壊れていたので、このリリースで直る
+- Android で `initialize()` / `setUserDictWords()` を呼ぶたびに ExpoModulesCore が出していた
+  「Introspectable data is missing」の警告を消した。引数の Record をコンパイル時に変換する
+  経路（`@OptimizedRecord`）に乗せたので、実行時のリフレクションも走らない
 - 開発と検証の対象を SDK 58 に移した。iOS のデプロイメントターゲット（16.4）と
   Android の minSdk（26）は変わらない
