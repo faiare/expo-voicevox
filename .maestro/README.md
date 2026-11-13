@@ -93,8 +93,22 @@ Maestro は音を聞けない。代わりに次の 3 つを見る。上ほど強
 
 上部のステータスバーは**本文の行数で高さが変わる**（WAV のパスは 3 行、「再生中 #1（7232ms）」は
 1 行）ので、下端ぎりぎりの要素は入ったり入らなかったりする。`02-synthesis` の `speech-state` が
-これで落ちた。**一連の assert が終わるまで見続ける要素は、先に画面の中央へ寄せておく**
-（`btn-stop-speaking` を中央にすると `btn-speak` が上、`speech-state` が直下に収まる）。
+これで落ちた。**一連の assert が終わるまで見続ける要素は、本文ではなく固定のステータスバーに置く**
+（`speech-state` は今はステータスバーにある）。
+
+### すでに見えている要素に `centerElement` を付けない
+
+`centerElement: true` は、対象がすでに画面に見えていると寄せるためのスワイプを 1 回だけ入れ、
+慣性で行き過ぎても「見えている」ので完了扱いにする。iOS の `02-synthesis` では
+`btn-stop-speaking` が y=597 → 111 まで飛び、その 2 段上の `btn-speak` が固定ステータスバーの
+裏（y=-6）に入った。**Maestro はステータスバーの裏に隠れた本文の要素も「見えている」と判断して
+タップする**ので、画面最上端をタップして iOS のステータスバータップ（先頭へスクロール）が発動し、
+ボタンは押されないまま `再生中` の待ちが時間切れになった（失敗時のスクリーンショットは画面の
+先頭に戻っている）。
+
+`centerElement` が無ければ、見えている要素ではスクロールせず、下から現れる要素はスワイプ 1 回分の
+範囲（画面の下半分）で止まるので、ステータスバーの裏には入らない。**押す要素の直前の位置合わせ
+では、その要素自身を `centerElement` なしで指す**こと。
 
 ### テキストの一致は正規表現で、部分一致には `.*` を付ける
 
@@ -257,7 +271,7 @@ Debug ビルドで回していて「testID を足したのに見つからない�
 | `input-text` | 合成するテキスト |
 | `dir-chip-cache` / `dir-chip-document` | WAV の書き出し先 |
 | `btn-synthesize-play` / `btn-speak` / `btn-speak-faster` / `btn-stop-speaking` | 3. 合成 |
-| `speech-state` | 再生状態（鳴っていないあいだは要素ごと無い） |
+| `speech-state` | 再生状態。画面上部の固定バーにある（鳴っていないあいだは要素ごと無い） |
 | `param-{speed,pitch,intonation,volume,pre,post}-{minus,value,plus}` | 4. 合成パラメータ |
 | `param-upspeak` / `param-upspeak-value` | 疑問文の語尾上げ。`-value` は `ON` / `OFF` |
 | `btn-params-reset` | 既定値に戻す |

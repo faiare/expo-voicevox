@@ -41,16 +41,20 @@ tags:
     id: 'dir-chip-cache'
 
 # --- speak(): ファイルを作らず、メモリ上の WAV をネイティブでそのまま鳴らす ---
-# speech-state は btn-stop-speaking の下に出る。btn-synthesize-play を中央にした
-# 位置のままだと画面からはみ出し、assertVisible が「映っていない」で落ちる
-# （上部ステータスバーの高さが本文の行数で変わるので、入るかどうかが安定しない）。
-# ここを中央に寄せておくと btn-speak が上、speech-state が直下に収まり、
-# 以降の speech-state の assert がすべて画面内に入る。
+# speech-state は上部の固定ステータスバーにあるので、スクロール位置に関係なく見える。
+#
+# ここでは centerElement を付けない。対象がすでに画面に見えていると、centerElement は
+# 寄せるためのスワイプを 1 回だけ入れて、慣性で行き過ぎても「見えている」ので完了扱いにする。
+# iOS で btn-stop-speaking が y=597 → 111 まで飛び、2 つ上の btn-speak が固定ステータスバーの
+# 裏（y=-6）に入った。Maestro はそれでも「見えている」と判断して画面最上端をタップし、
+# iOS のステータスバータップ（先頭へスクロール）が発動して speak() が呼ばれなかった。
+# centerElement が無ければ、見えている要素ではスクロールせず、下から現れる要素はスワイプ
+# 1 回分の範囲（画面の下半分）で止まるので、固定ステータスバーの裏には入らない。
+# btn-synthesize-play を押せた時点でそれより下にある btn-speak がヘッダーの裏にあることは無い。
 - scrollUntilVisible:
     element:
-      id: 'btn-stop-speaking'
+      id: 'btn-speak'
     direction: DOWN
-    centerElement: true
     speed: 30
     timeout: 120000
 - tapOn:
@@ -73,6 +77,15 @@ tags:
     id: 'status-error'
 
 # --- stopSpeaking(): 鳴っている最中に止める ---
+# 停止ボタンは鳴らす前に画面へ入れておく（鳴っている間にスクロールすると、鳴り終わってから
+# 押すことになりうる）。btn-speak は 1 つ上の段にあり、btn-stop-speaking が下から現れて
+# 止まる位置（画面の下半分）からでも固定ステータスバーより下に収まる。
+- scrollUntilVisible:
+    element:
+      id: 'btn-stop-speaking'
+    direction: DOWN
+    speed: 30
+    timeout: 120000
 - tapOn:
     id: 'btn-speak'
 - extendedWaitUntil:

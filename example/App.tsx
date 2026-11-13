@@ -453,6 +453,15 @@ export default function App() {
         <Text testID="status-text" style={[styles.note, styles.statusText]} numberOfLines={4}>
           {status || '—'}
         </Text>
+        {/*
+          再生状態もここに置く。鳴り始めから鳴り終わりまで見続ける値なので、本文に置くと
+          スクロール位置しだいで画面から外れ、E2E がそのたびに位置合わせを要する。
+        */}
+        {speechState ? (
+          <Text testID="speech-state" style={[styles.note, styles.statusText]} numberOfLines={1}>
+            再生状態: {speechState}
+          </Text>
+        ) : null}
         {error ? (
           <Text testID="status-error" style={styles.error} numberOfLines={4}>
             {error}
@@ -581,12 +590,8 @@ export default function App() {
             disabled={busy || styleId === null}
           />
           {/* 再生中は busy になるので、停止だけは busy でも押せるようにしておく。 */}
+          {/* 再生状態（speech-state）は上部の固定ステータスバーに出す。 */}
           <Button testID="btn-stop-speaking" title="stopSpeaking()" onPress={handleStopSpeaking} />
-          {speechState ? (
-            <Text testID="speech-state" style={styles.note}>
-              再生状態: {speechState}
-            </Text>
-          ) : null}
         </Group>
 
         <Group testID="section-params" name="4. 合成パラメータ">
