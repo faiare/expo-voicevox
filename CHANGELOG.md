@@ -1,5 +1,11 @@
 # @faiare/expo-voicevox
 
+## 0.4.2
+
+### Patch Changes
+
+- [#26](https://github.com/faiare/expo-voicevox/pull/26) [`30c4259`](https://github.com/faiare/expo-voicevox/commit/30c42596e1edd4ab5c676a42cc38ac5dc55579bd) Thanks [@faiare](https://github.com/faiare)! - iOS: speak 系の再生 1 回につき 1 件残っていた「AVAudioSession Hang Risk」の警告を解消しました。`AVAudioPlayer.prepareToPlay()` が OS の内部でオーディオセッションを暗黙に有効化しており、これがメインスレッドで走っていたことが原因です。プレイヤーの生成・再生・停止とセッションの操作を、すべて run loop を持つ専用スレッドへ移しました。`audioSession: 'none'` の場合も同じ警告が出ていましたが、これも解消しています。
+
 ## 0.4.1
 
 ### Patch Changes
