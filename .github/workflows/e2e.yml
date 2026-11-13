@@ -156,6 +156,30 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # ランナーの cmdline-tools（ubuntu-26.04 は 20.0）を、AVD を作れる版へ差し替える。
+      #
+      # SDK リポジトリが package.xml を XML version 4 で配るようになり、20.0 はそれを読めない
+      # （version 4 のパーサは 21.0 から）。sdkmanager が入れた最新の emulator を認識できず、
+      # avdmanager create avd が「"hardware-properties.ini" could not be read」で落ちる。
+      # 前兆は sdkmanager の「only understands SDK XML versions up to 3」という警告。
+      #
+      # キャッシュが当たっている間は AVD を作らないので踏まない。AVD のキャッシュは 7 日
+      # 使われないと消えるため、e2e がしばらく回っていなかった直後に突然落ちる。
+      #
+      # android-emulator-runner は $ANDROID_HOME/cmdline-tools が既にあればそのまま使い、
+      # latest/bin を PATH の先頭に足すだけなので、latest を置き換えれば両方のステップに効く。
+      - name: Update the Android command-line tools
+        env:
+          CMDLINE_TOOLS_ZIP: commandlinetools-linux-16111833_latest.zip # 23.0
+          CMDLINE_TOOLS_SHA256: 0877a1d048fe4a24efe2eff536ca4223f7adeb58648bb81909d33c446918cfa8
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/cmdline-tools.zip" "https://dl.google.com/android/repository/$CMDLINE_TOOLS_ZIP"
+          echo "$CMDLINE_TOOLS_SHA256  $RUNNER_TEMP/cmdline-tools.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/cmdline-tools.zip" -d "$RUNNER_TEMP/cmdline-tools-new"
+          rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+          mv "$RUNNER_TEMP/cmdline-tools-new/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
+
       - name: Cache the AVD snapshot
         uses: actions/cache@v6
         id: avd-cache
