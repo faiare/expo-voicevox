@@ -38,6 +38,11 @@ struct VoicevoxPlaybackResult {
 /// で作ったワーカーには run loop が無いので、そこで生成すると
 /// `audioPlayerDidFinishPlaying(_:successfully:)` が永久に呼ばれず、再生完了を検知できなくなる。
 /// **生成・`play()`・`stop()` はすべてメインキューの上で行うこと。**
+///
+/// 逆に `AVAudioSession` の `setCategory` / `setActive` はメインで呼んではいけない。どちらも
+/// ブロッキングで、メインで呼ぶと Xcode の Thread Performance Checker が「AVAudioSession Hang
+/// Risk」を出す（実際にメインが数百 ms 止まり得る）。これらは `sessionQueue` に載せる。
+/// 非同期版の `activate(options:completionHandler:)` は iOS 27 からなので使っていない。
 final class VoicevoxPlayer: NSObject, AVAudioPlayerDelegate {
   /// 状態は JS スレッドから `isSpeaking` で同期的に読まれるので、キューではなくロックで守る。
   ///
@@ -51,8 +56,15 @@ final class VoicevoxPlayer: NSObject, AVAudioPlayerDelegate {
 
   /// メインキューの上でだけ触ること。
   private var player: AVAudioPlayer?
-  /// メインキューの上でだけ触ること。
-  private var activeSession: VoicevoxAudioSessionMode = .none
+  /// `setCategory` / `setActive` を載せる直列キュー。
+  ///
+  /// 直列なので「前の発話の deactivate → 次の発話の activate」の順序が積んだ順のまま保たれる。
+  private let sessionQueue = DispatchQueue(label: "expo.modules.voicevox.audio-session")
+  /// セッションを有効化した発話の ID（0 なら有効化していない）。`sessionQueue` の上でだけ触ること。
+  ///
+  /// deactivate はこの ID と一致したときだけ行う。有効化の最中に追い越された発話の deactivate が、
+  /// 追い越した発話の activate より後に積まれても、後者のセッションを落とさないため。
+  private var sessionOwnerId = 0
 
   /// 状態が変わったときにモジュールへ知らせる。モジュールが JS へ `sendEvent` する。
   var onStateChange: ((Int, VoicevoxSpeechState, String) -> Void)?
@@ -97,42 +109,22 @@ final class VoicevoxPlayer: NSObject, AVAudioPlayerDelegate {
     completion: @escaping (Result<VoicevoxPlaybackResult, Error>) -> Void
   ) {
     DispatchQueue.main.async {
-      guard self.stateLock.withLock({ self.pendingId == id }) else {
+      guard self.isPending(id) else {
         completion(.success(VoicevoxPlaybackResult(id: id, durationMillis: 0, started: false)))
         return
       }
 
-      // 前の発話はここで止める（新しい音が出る直前まで鳴らしておく）。
+      // 前の発話はここで止める。止めたときの deactivate は sessionQueue に積まれるので、
+      // 下で積む activate より必ず先に処理される。
       self.stopOnMain()
 
-      do {
-        try self.activateSession(session)
-        let player = try AVAudioPlayer(data: wav)
-        player.delegate = self
-        player.prepareToPlay()
-        guard player.play() else {
-          throw VoicevoxException("could not start the audio player")
+      // セッションを触らない場合も sessionQueue を 1 回通す。前の発話の deactivate が
+      // 終わる前に鳴らし始めると、鳴り出した直後のセッションを落としかねないため。
+      self.sessionQueue.async {
+        let activation = Result { try self.activateSession(session, for: id) }
+        DispatchQueue.main.async {
+          self.startOnMain(id: id, wav: wav, activation: activation, completion: completion)
         }
-        self.player = player
-        self.activeSession = session
-        self.stateLock.withLock {
-          self.playingId = id
-          self.playing = true
-        }
-        self.onStateChange?(id, .started, "")
-        completion(
-          .success(
-            VoicevoxPlaybackResult(
-              id: id,
-              durationMillis: Int((player.duration * 1000).rounded()),
-              started: true
-            )
-          )
-        )
-      } catch {
-        self.player = nil
-        self.deactivateSession()
-        completion(.failure(error))
       }
     }
   }
@@ -170,6 +162,59 @@ final class VoicevoxPlayer: NSObject, AVAudioPlayerDelegate {
 
   // MARK: - Private
 
+  private func isPending(_ id: Int) -> Bool {
+    stateLock.withLock { pendingId == id }
+  }
+
+  /// セッションの準備を終えた発話を鳴らし始める。メインキューの上でだけ呼ぶこと。
+  private func startOnMain(
+    id: Int,
+    wav: Data,
+    activation: Result<Void, Error>,
+    completion: @escaping (Result<VoicevoxPlaybackResult, Error>) -> Void
+  ) {
+    if case .failure(let error) = activation {
+      completion(.failure(error))
+      return
+    }
+    // 有効化している間に別の発話か stop() に追い越されていたら、鳴らさずに有効化を取り消す。
+    guard isPending(id) else {
+      deactivateSession(for: id)
+      completion(.success(VoicevoxPlaybackResult(id: id, durationMillis: 0, started: false)))
+      return
+    }
+    // 前の発話は play() の入口で止めてある。予約が最新である発話は 1 つしかないので、
+    // 有効化を待つあいだに別の音が鳴り始めていることは無い。
+    do {
+      let player = try AVAudioPlayer(data: wav)
+      player.delegate = self
+      player.prepareToPlay()
+      guard player.play() else {
+        throw VoicevoxException("could not start the audio player")
+      }
+      self.player = player
+      stateLock.withLock {
+        playingId = id
+        playing = true
+      }
+      onStateChange?(id, .started, "")
+      completion(
+        .success(
+          VoicevoxPlaybackResult(
+            id: id,
+            durationMillis: Int((player.duration * 1000).rounded()),
+            started: true
+          )
+        )
+      )
+    } catch {
+      player = nil
+      // 有効化には成功しているので、鳴らせなかった分はここで戻す。
+      deactivateSession(for: id)
+      completion(.failure(error))
+    }
+  }
+
   /// 鳴っている発話を止める。メインキューの上でだけ呼ぶこと。
   private func stopOnMain() {
     guard let player else {
@@ -195,7 +240,7 @@ final class VoicevoxPlayer: NSObject, AVAudioPlayerDelegate {
     guard let finished else {
       return
     }
-    deactivateSession()
+    deactivateSession(for: finished)
     onStateChange?(finished, state, reason)
   }
 
@@ -210,8 +255,8 @@ final class VoicevoxPlayer: NSObject, AVAudioPlayerDelegate {
     DispatchQueue.main.async { self.stopOnMain() }
   }
 
-  /// メインキューの上でだけ呼ぶこと。
-  private func activateSession(_ mode: VoicevoxAudioSessionMode) throws {
+  /// `sessionQueue` の上でだけ呼ぶこと。
+  private func activateSession(_ mode: VoicevoxAudioSessionMode, for id: Int) throws {
     let options: AVAudioSession.CategoryOptions
     switch mode {
     case .none:
@@ -227,17 +272,24 @@ final class VoicevoxPlayer: NSObject, AVAudioPlayerDelegate {
     // .playback にすると消音スイッチが入っていても鳴る。
     try session.setCategory(.playback, mode: .default, options: options)
     try session.setActive(true)
+    sessionOwnerId = id
   }
 
   /// 元のカテゴリには戻さない。プロセス全体で共有される設定なので、戻すと再生のあいだに
   /// 他のライブラリが変えた設定を踏み潰す。触られたくない利用者は `audioSession: 'none'` を使う。
   ///
-  /// メインキューの上でだけ呼ぶこと。
-  private func deactivateSession() {
-    guard activeSession != .none else {
-      return
+  /// `id` の発話がセッションを有効化していれば無効化する。どのスレッドから呼んでもよい
+  /// （`sessionQueue` に積んで即座に戻る）。
+  ///
+  /// 有効化していない発話（`audioSession: 'none'` や、有効化の前に失敗したもの）や、すでに
+  /// 別の発話に持ち主が移っていた場合は何もしない。
+  private func deactivateSession(for id: Int) {
+    sessionQueue.async {
+      guard self.sessionOwnerId == id, id != 0 else {
+        return
+      }
+      self.sessionOwnerId = 0
+      try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
-    activeSession = .none
-    try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
   }
 }

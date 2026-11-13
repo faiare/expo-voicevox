@@ -283,6 +283,14 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
   スレッドの run loop」に配送されるので、run loop の無い GCD キューで作ると
   `audioPlayerDidFinishPlaying` が永久に呼ばれず再生完了を検知できない。生成・`play()`・`stop()` は
   すべて `DispatchQueue.main` の上で行う。
+- **iOS: 逆に `AVAudioSession` の `setCategory` / `setActive` はメインで呼んではいけない**。
+  ブロッキング API なので Xcode が「AVAudioSession Hang Risk」を出す。`VoicevoxPlayer` の
+  `sessionQueue`（直列）に載せ、「キューで有効化 → メインで生成・`play()`」の順に往復する。
+  前の発話の deactivate と次の activate の順序は直列キューが保ち、有効化の最中に追い越された
+  発話の deactivate が後から来ても落とさないよう、**有効化した発話 ID（`sessionOwnerId`）と
+  一致したときだけ deactivate する**。非同期版の `activate(options:completionHandler:)` /
+  `deactivate(options:completionHandler:)` は iOS 27 からで、使うと Xcode 26（CI の macos-26）で
+  コンパイルが通らず、完了を待って順序を保つ仕組みも別に要るので採っていない。
 - **iOS: 割り込み（着信など）では delegate が呼ばれない**。`AVAudioSession.interruptionNotification`
   を購読して自分で状態を畳む。`stop()` でも delegate は来ないので同様。
 - **Android: WAV ヘッダを 44 バイト決め打ちにしない**。`synthesis()` は `outputSamplingRate` /
