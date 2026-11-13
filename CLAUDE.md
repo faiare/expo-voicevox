@@ -225,6 +225,16 @@ gh workflow run e2e.yml --ref feat/xxx -f scope=smoke && gh run watch
 - **画面に収まる行数が Android と違う**。`03-params` の「開始の無音」は話速の 4 行下にあり、iPhone では話速と同時に映らない。**Android で通っているフローが iOS でだけ `assertVisible` に落ちる**ことがあるので、`assertVisible` の前に `scrollUntilVisible` で運ぶ規則は iOS でより厳しく効く。
 - 所要時間の実測（full / 9 フロー）は iOS ジョブが 24 分。内訳は Maestro の 9 本が 10.7 分、`simctl bootstatus` が 3.9 分、`xcodebuild` が 3.3 分、`pod install` が 2.8 分。**`bootstatus` はステップとして直列に 4 分待つ**（`boot` 自体は即座に返る）ので、詰めたいならここを後ろのステップへ分けて待つ形にする余地がある。
 
+#### iOS のネイティブ単体テスト（`ios-unit.yml`）
+
+`.github/workflows/ios-unit.yml` が `ios/Tests` の XCTest を macos-26 で回す（手元の `npm run test:ios` と同じ）。`ci.yml` には macOS ランナーが無く、`e2e.yml` は既定で PR に回らないので別ファイルにしてある。
+
+- **トリガは `paths` で絞った PR と main への push**（`ios/**` / `plugin/**` / `example/` の設定と lock など）と `workflow_dispatch`。ラベルは要らない。`push` と `pull_request` の `paths` は YAML アンカー（`&paths` / `*paths`）で共有している。
+- **required status check にしてはいけない**。`paths` に当たらない PR ではワークフローごと起動せず、永久に pending になる。
+- **アプリ本体はビルドしない**が、prebuild と `pod install` は省けない（テストバンドルが vendored の xcframework をリンクし、`:testspecs` も prebuild が Podfile に足す）。アセットのキャッシュキーは `e2e.yml` の ios ジョブと同一。
+- **ホストの音声出力デバイスが要る**のは E2E と同じ（テストが無音の WAV を実際に鳴らす）。
+- 失敗すると `example/ios/build/Logs/Test` の xcresult が artifact に上がる。メインで `AVAudioSession` を触った箇所の呼び出し履歴がテストのメッセージに入っている。
+
 #### Expo のメジャー追随（`expo-major-watch.yml`）
 
 `.github/workflows/expo-major-watch.yml` が週次（月曜 03:17 UTC）で npm の `expo@latest` を見て、メジャーがこのリポジトリより新しければ「Expo SDK NN に追随する」という issue を 1 本立てる。判定は `scripts/check-expo-major.mjs`、本文のひな形は `.github/expo-major-issue.md`。Dependabot は入れていない（メジャー追随はネイティブを含む手作業のチェックリストなので、PR より作業チケットが合う）。
