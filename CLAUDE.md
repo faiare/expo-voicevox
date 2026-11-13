@@ -431,7 +431,7 @@ Swift の `String` を `voicevox_user_dict_word_make` にそのまま渡して�
 
 ### バージョン注意
 
-- モジュール本体の devDependencies は expo `^58.0.14` / TypeScript `^5.9.2`、example は TypeScript `~6.0.3` と**食い違っている**（テンプレート生成時の差）。型エラーやビルド差異が出たらまずここを疑う。react-native は両方 `0.88.0` で揃っている（SDK 58 で 0.86 → 0.88。0.87 から Strict TypeScript API が既定になり、`react-native/Libraries/*` への deep import は型エラーになる）。jest-expo 58 は `@react-native/jest-preset` を peer で要求するので、モジュール本体の devDependencies に `0.88.0` で明示してある。
+- モジュール本体の devDependencies は expo `^58.0.14` / TypeScript `^5.9.2`、example は TypeScript `~6.0.3` と**食い違っている**（テンプレート生成時の差）。型エラーやビルド差異が出たらまずここを疑う。react-native は両方 `0.88.1` で揃っている（**expo のパッチを上げたら `npx expo install --check` を example で回す**こと。expo 58.0.25 は RN 0.88.1 を期待し、0.88.0 のままだと食い違いを報告する。SDK 58 で 0.86 → 0.88。0.87 から Strict TypeScript API が既定になり、`react-native/Libraries/*` への deep import は型エラーになる）。jest-expo 58 は `@react-native/jest-preset` を peer で要求するので、モジュール本体の devDependencies に react-native と同じ版（`0.88.1`）で明示してある。
 - Android は新アーキテクチャ有効（`newArchEnabled=true`）、Hermes 有効。
 
 ### Expo のドキュメント参照
