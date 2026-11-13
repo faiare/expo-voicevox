@@ -1,5 +1,11 @@
 # @faiare/expo-voicevox
 
+## 0.4.1
+
+### Patch Changes
+
+- [#23](https://github.com/faiare/expo-voicevox/pull/23) [`b3c4126`](https://github.com/faiare/expo-voicevox/commit/b3c41261ccb9e56dfcf4598acd051e0bcbc183d5) Thanks [@faiare](https://github.com/faiare)! - iOS で `audioSession` を指定した `speak` 系が、メインスレッドで `AVAudioSession` の `setCategory` / `setActive` を呼んでいたのをバックグラウンドの直列キューへ移した。Xcode の「AVAudioSession Hang Risk」警告が出なくなる。あわせて、セッションの有効化後に再生の開始に失敗したとき、セッションが有効のまま残っていたのを直した。
+
 ## 0.4.0
 
 ### Minor Changes
