@@ -18,6 +18,7 @@
     "gen:vvm-catalog": "tsc --build plugin && node scripts/gen-vvm-catalog.mjs",
     "refresh:artifact-digests": "tsc --build plugin && node scripts/refresh-artifact-digests.mjs",
     "check:expo-major": "node scripts/check-expo-major.mjs",
+    "test:ios": "node scripts/test-ios.mjs",
     "e2e": "maestro test .maestro",
     "e2e:ios": "maestro test --platform ios .maestro",
     "e2e:android": "maestro test --platform android .maestro",

@@ -87,7 +87,8 @@ public class ExpoVoicevoxModule: Module {
 
     OnDestroy {
       // 停止は engineQueue に依存しないので先に済ませる（合成の実行中でも即座に黙る）。
-      self.player.stop()
+      // 再生用の専用スレッドもここで畳む。
+      self.player.shutdown()
       // 合成の実行中に破棄されうるので、直列キューの上で解放する。
       self.engineQueue.sync {
         self.engine.release()
@@ -603,7 +604,7 @@ public class ExpoVoicevoxModule: Module {
   /// 再生系に共通する「engineQueue の上で合成し、再生はその外で始める」流れ。
   ///
   /// 再生の完了を engineQueue の中で待つと、鳴っているあいだ次の合成を始められない。
-  /// `player.play` はメインキューへ投げて即座に戻り、Promise はそちらで解決する。
+  /// `player.play` は再生用の専用スレッドへ投げて即座に戻り、Promise はそちらで解決する。
   private func speakWav(
     styleId: Int,
     audioSession: String,
