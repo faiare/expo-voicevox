@@ -33,6 +33,7 @@ npm run setup:voicevox # voicevox-core のバイナリを取得（開発者用�
 npm run gen:vvm-catalog # VVM のキャラクター対応表を再生成（メンテ用・要ネットワーク）
 npm run refresh:artifact-digests # 配布物の size / sha256 の固定表を作り直す（メンテ用・要ネットワーク）
 npm run check:expo-major # npm の expo@latest がこのリポジトリより新しいメジャーか調べる
+npm run test:ios       # iOS のネイティブ単体テスト（XCTest。要 example の prebuild + pod install）
 npm run e2e            # Maestro の E2E（要ビルド済みアプリ。下の「E2E」を読むこと）
 npm run e2e:ios        # iOS シミュレータだけで回す
 npm run e2e:android    # Android エミュレータだけで回す
@@ -77,7 +78,17 @@ cd example/ios && xcodebuild -workspace expovoicevoxexample.xcworkspace \
 
 # .app にアセットが構造ごと入ったかの確認
 find example/ios/build/Build/Products/*/*.app/voicevox -maxdepth 1
+
+# Swift: XCTest（ios/Tests）をシミュレータで回す。起動中の iPhone か最新ランタイムの iPhone を選ぶ
+npm run test:ios
 ```
+
+iOS の XCTest は podspec の `test_spec 'Tests'`（`ios/Tests/*.swift`）として置いてある。autolinking の
+`use_expo_modules!` は test_spec を拾わないので、example 専用の `example/plugins/withExpoVoicevoxTestSpecs.js`
+が Podfile に `pod 'ExpoVoicevox', :path => '../../ios', :testspecs => ['Tests']` を先に足している
+（すでにある pod は autolinking が飛ばす）。pod install 後に `ExpoVoicevox-Unit-Tests` スキームができる。
+テストバンドルは React の静的ライブラリを抱えるので `test_spec.libraries = 'c++'` が要る。
+`ios/Tests` は `package.json` の `files` に入れていない（npm には出さない）。
 
 `swiftc -typecheck` を単体ファイルに掛けるだけでは escaping closure まわりのエラーを取りこぼす。**Swift は必ず `xcodebuild` まで通すこと。**
 
@@ -214,6 +225,16 @@ gh workflow run e2e.yml --ref feat/xxx -f scope=smoke && gh run watch
 - **画面に収まる行数が Android と違う**。`03-params` の「開始の無音」は話速の 4 行下にあり、iPhone では話速と同時に映らない。**Android で通っているフローが iOS でだけ `assertVisible` に落ちる**ことがあるので、`assertVisible` の前に `scrollUntilVisible` で運ぶ規則は iOS でより厳しく効く。
 - 所要時間の実測（full / 9 フロー）は iOS ジョブが 24 分。内訳は Maestro の 9 本が 10.7 分、`simctl bootstatus` が 3.9 分、`xcodebuild` が 3.3 分、`pod install` が 2.8 分。**`bootstatus` はステップとして直列に 4 分待つ**（`boot` 自体は即座に返る）ので、詰めたいならここを後ろのステップへ分けて待つ形にする余地がある。
 
+#### iOS のネイティブ単体テスト（`ios-unit.yml`）
+
+`.github/workflows/ios-unit.yml` が `ios/Tests` の XCTest を macos-26 で回す（手元の `npm run test:ios` と同じ）。`ci.yml` には macOS ランナーが無く、`e2e.yml` は既定で PR に回らないので別ファイルにしてある。
+
+- **トリガは `paths` で絞った PR と main への push**（`ios/**` / `plugin/**` / `example/` の設定と lock など）と `workflow_dispatch`。ラベルは要らない。`push` と `pull_request` の `paths` は YAML アンカー（`&paths` / `*paths`）で共有している。
+- **required status check にしてはいけない**。`paths` に当たらない PR ではワークフローごと起動せず、永久に pending になる。
+- **アプリ本体はビルドしない**が、prebuild と `pod install` は省けない（テストバンドルが vendored の xcframework をリンクし、`:testspecs` も prebuild が Podfile に足す）。アセットのキャッシュキーは `e2e.yml` の ios ジョブと同一。
+- **ホストの音声出力デバイスが要る**のは E2E と同じ（テストが無音の WAV を実際に鳴らす）。
+- 失敗すると `example/ios/build/Logs/Test` の xcresult が artifact に上がる。メインで `AVAudioSession` を触った箇所の呼び出し履歴がテストのメッセージに入っている。
+
 #### Expo のメジャー追随（`expo-major-watch.yml`）
 
 `.github/workflows/expo-major-watch.yml` が週次（月曜 03:17 UTC）で npm の `expo@latest` を見て、メジャーがこのリポジトリより新しければ「Expo SDK NN に追随する」という issue を 1 本立てる。判定は `scripts/check-expo-major.mjs`、本文のひな形は `.github/expo-major-issue.md`。Dependabot は入れていない（メジャー追随はネイティブを含む手作業のチェックリストなので、PR より作業チケットが合う）。
@@ -277,21 +298,33 @@ JS からネイティブへの接続は「モジュール名文字列」1本で�
 ### 再生（speak 系）の勘所
 
 - **再生の完了を `engineQueue` / `engineLock` の中で待ってはいけない**。待つと鳴っているあいだ
-  まるごと次の合成がブロックされる。合成だけを直列化し、再生は別（iOS はメインキュー、Android は
+  まるごと次の合成がブロックされる。合成だけを直列化し、再生は別（iOS は再生用の専用スレッド、Android は
   発話ごとの専用スレッド）で始めて即座に戻す。`stopSpeaking` / `isSpeaking` にも直列化を掛けない
   （掛けると合成の実行中に止められない）。
-- **iOS: `AVAudioPlayer` を専用の `DispatchQueue` で生成してはいけない**。delegate は「生成した
-  スレッドの run loop」に配送されるので、run loop の無い GCD キューで作ると
-  `audioPlayerDidFinishPlaying` が永久に呼ばれず再生完了を検知できない。生成・`play()`・`stop()` は
-  すべて `DispatchQueue.main` の上で行う。
-- **iOS: 逆に `AVAudioSession` の `setCategory` / `setActive` はメインで呼んではいけない**。
-  ブロッキング API なので Xcode が「AVAudioSession Hang Risk」を出す。`VoicevoxPlayer` の
-  `sessionQueue`（直列）に載せ、「キューで有効化 → メインで生成・`play()`」の順に往復する。
-  前の発話の deactivate と次の activate の順序は直列キューが保ち、有効化の最中に追い越された
-  発話の deactivate が後から来ても落とさないよう、**有効化した発話 ID（`sessionOwnerId`）と
-  一致したときだけ deactivate する**。非同期版の `activate(options:completionHandler:)` /
-  `deactivate(options:completionHandler:)` は iOS 27 からで、使うと Xcode 26（CI の macos-26）で
-  コンパイルが通らず、完了を待って順序を保つ仕組みも別に要るので採っていない。
+- **iOS: `AVAudioPlayer` と `AVAudioSession` の操作は、すべて `VoicevoxPlayerThread`（run loop を
+  回し続ける専用スレッド）の上で行う**。メインにも GCD のキューにも置いてはいけない。
+  - **メインがだめな理由**: `setCategory` / `setActive` はブロッキングで、Xcode が「AVAudioSession
+    Hang Risk」を出す。しかも明示的に呼ぶ分だけでなく、**`AVAudioPlayer.prepareToPlay()` が
+    AudioQueue を確保するとき（`AVAudioPlayerCpp::allocAudioQueue` → `AudioSessionSetActive_Priv`）に
+    OS の内部で `setActive` が暗黙に走る**。直前に別スレッドで有効化を済ませていても、
+    `audioSession: 'none'` でも起きる。0.4.1 は明示的な分だけを `sessionQueue` に移したので、
+    1 発話につき 1 件残っていた。
+  - **GCD のキューがだめな理由**: delegate の配送先が文書化されていない。iOS 27 のシミュレータでは
+    GCD キューで生成してもメインに届いたが、「生成したスレッドの run loop に届く」とする資料もあり、
+    run loop の無いキューで作ると古い OS で `audioPlayerDidFinishPlaying` を取りこぼすおそれがある
+    （手元に 16.4〜26 のランタイムが無く確かめられていない）。専用スレッドなら、どちらの振る舞いでも
+    届く。delegate はどこに届いても専用スレッドへ戻してから状態を触り、差し替わった後に届いた
+    古い通知は `player` との同一性で捨てる。
+  - 1 本のスレッドで直列に動くので、「前の発話の停止・deactivate → 次の activate → 再生」の順序は
+    自然に保たれる。セッションを有効化した発話 ID（`sessionOwnerId`）は、`'none'` の発話や有効化前に
+    失敗した発話の終わりに deactivate しないための印として残してある。
+  - 非同期版の `activate(options:completionHandler:)` / `deactivate(options:completionHandler:)` は
+    iOS 27 からで、使うと Xcode 26（CI の macos-26）でコンパイルが通らないので採っていない。
+  - **再発は XCTest で検出する**（`ios/Tests/VoicevoxPlayerTests.swift`、`npm run test:ios`）。
+    `AVAudioSession` の `setActive` / `setCategory` を swizzle してメインスレッドからの呼び出しを
+    記録し、0 件であることと `finished` が届くことを同時に assert する。暗黙の有効化も同じ
+    `-[AVAudioSession setActive:withOptions:error:]` を通るので捕まる（0.4.1 のコードで 4 本落ちる
+    ことを確認済み）。`VoicevoxPlayer` を触ったら回すこと。
 - **iOS: 割り込み（着信など）では delegate が呼ばれない**。`AVAudioSession.interruptionNotification`
   を購読して自分で状態を畳む。`stop()` でも delegate は来ないので同様。
 - **Android: WAV ヘッダを 44 バイト決め打ちにしない**。`synthesis()` は `outputSamplingRate` /

@@ -26,6 +26,7 @@
     "plugins": [
       "expo-asset",
       "expo-audio",
+      "./plugins/withExpoVoicevoxTestSpecs",
       [
         "../app.plugin.js",
         {

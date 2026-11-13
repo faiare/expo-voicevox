@@ -29,4 +29,14 @@ Pod::Spec.new do |s|
     "Frameworks/voicevox_core.xcframework",
     "Frameworks/voicevox_onnxruntime.xcframework",
   ]
+
+  # ネイティブの単体テスト（シミュレータで XCTest として回す）。npm の tarball には入れないので、
+  # 利用者の pod install では `:testspecs` を指定しない限り参照されない。example の Podfile は
+  # example/plugins/withExpoVoicevoxTestSpecs.js が `:testspecs => ['Tests']` を足している。
+  s.test_spec 'Tests' do |test_spec|
+    test_spec.source_files = 'Tests/*.swift'
+    test_spec.frameworks = 'XCTest', 'AVFoundation'
+    # 依存（ExpoModulesCore → React）の静的ライブラリが C++ 標準ライブラリを要求する。
+    test_spec.libraries = 'c++'
+  end
 end

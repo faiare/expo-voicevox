@@ -1,0 +1,139 @@
+name: iOS unit tests
+
+# iOS のネイティブ単体テスト（ios/Tests、podspec の test_spec 'Tests'）を macOS ランナーで回す。
+# 中身は VoicevoxPlayer の検証で、AVAudioSession をメインスレッドで触っていないことと、
+# 再生の完了通知（delegate）を取りこぼさないことを見ている。手元では `npm run test:ios`。
+#
+# ci.yml（ubuntu）にも e2e.yml（ラベル付き PR と main だけ）にも入れていない。
+#   - ci.yml には macOS ランナーが無い。
+#   - e2e.yml は 20 分以上かかり、既定では PR で回らない。単体テストは 1 秒で終わるので、
+#     iOS のネイティブを触った PR では毎回回したい。
+# アプリ本体のビルドも Maestro も要らないぶん、e2e.yml の iOS ジョブより短く済む。
+#
+# paths で絞っているので、該当しない PR ではワークフローごと起動しない。
+# **required status check にしてはいけない**（起動しなかった PR が永久に pending になる）。
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - 'ios/**'
+      - 'plugin/**'
+      - 'example/app.json'
+      - 'example/plugins/**'
+      - 'example/package.json'
+      - 'example/package-lock.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/test-ios.mjs'
+      - '.github/workflows/ios-unit.yml'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+# ci.yml / e2e.yml とはグループを分ける。共有すると片方のキャンセルがもう片方を巻き込む。
+concurrency:
+  group: ios-unit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: XCTest (iOS)
+    # macos-15 は使えない（既定の Xcode が Swift 6.1 で ExpoModulesJSI の SwiftPM が止まる）。
+    # 理由の詳細は e2e.yml の ios ジョブのコメントを参照。
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            example/package-lock.json
+
+      # Swift のバージョン不足はビルドの終盤まで分からないので、最初に控えておく。
+      - name: Show the toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # テストは AVAudioPlayer を実際に鳴らす（無音の WAV）。シミュレータの再生はホスト macOS の
+      # CoreAudio に出るので、出力デバイスが無いと play() が false を返して全テストが落ちる。
+      # 手順は e2e.yml の ios ジョブと同じ（actions/runner-images#13668）。
+      - name: Ensure a host audio output device
+        run: |
+          if ! system_profiler SPAudioDataType | grep -qi output; then
+            echo "no audio output device; restarting coreaudiod."
+            sudo killall coreaudiod || true
+            for _ in 1 2 3 4 5 6; do
+              sleep 5
+              system_profiler SPAudioDataType | grep -qi output && break
+            done
+          fi
+          system_profiler SPAudioDataType || true
+
+      # ランナーでの初回 boot は 4 分近くかかるので、ここで boot だけ投げて（即座に返る）
+      # npm ci・prebuild・pod install・ビルドの数分を暖機に充てる。完了は xcodebuild test が待つ。
+      # 端末名はランナーイメージの Xcode で変わるので固定しない。
+      - name: Boot the simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available --json \
+            | jq -r '.devices | to_entries
+                | map(select(.key | test("SimRuntime[.]iOS")))
+                | sort_by(.key) | last | .value
+                | map(select(.name | test("^iPhone"))) | last | .udid')
+          if [ -z "$udid" ] || [ "$udid" = "null" ]; then
+            echo "no iPhone simulator is available." >&2
+            xcrun simctl list devices available >&2
+            exit 1
+          fi
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$udid" || true
+
+      # podspec の vendored_frameworks（voicevox_core / onnxruntime）は config plugin が取得する。
+      # テストバンドルもこれをリンクするので prebuild は省けない。キーは e2e.yml の ios ジョブと
+      # 同一（runner.os も同じ macOS）なので、どちらかが温めたものをそのまま拾う。
+      - name: Cache voicevox-core artifacts
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/expo-voicevox
+          key: >-
+            voicevox-${{ runner.os }}-${{ hashFiles('plugin/src/core/versions.ts',
+            'plugin/src/core/artifacts.generated.ts', 'example/app.json') }}
+
+      # prepare が plugin/build/withVoicevox を作るので prebuild より先に必要。
+      - run: npm ci
+
+      - name: Install example dependencies
+        run: npm ci
+        working-directory: example
+
+      # example/plugins/withExpoVoicevoxTestSpecs.js が Podfile に `:testspecs => ['Tests']` を足す。
+      - name: Prebuild the example app (iOS)
+        run: npx expo prebuild --platform ios --no-install
+        working-directory: example
+
+      # --no-install は CocoaPods も飛ばすので自分で呼ぶ。ここで ExpoVoicevox-Unit-Tests スキームができる。
+      - name: Install the CocoaPods dependencies
+        run: pod install
+        working-directory: example/ios
+
+      - name: Wait for the simulator
+        run: xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
+
+      - name: Run the XCTest suite
+        env:
+          IOS_SIMULATOR_UDID: ${{ steps.sim.outputs.udid }}
+        run: npm run test:ios
+
+      # 失敗したテストのメッセージには、メインで AVAudioSession を触ったときの呼び出し履歴が入る。
+      - name: Upload the test results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-unit-xcresult
+          path: example/ios/build/Logs/Test
+          if-no-files-found: ignore
